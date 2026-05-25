@@ -2,6 +2,7 @@ package com.example.botonera
 
 import android.Manifest
 import android.app.ForegroundServiceStartNotAllowedException
+import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -66,6 +67,13 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                     "requestNotificationPermission" -> {
                         requestNotificationPermission(result)
+                    }
+                    "isVolumeAccessibilityServiceEnabled" -> {
+                        result.success(isVolumeAccessibilityServiceEnabled())
+                    }
+                    "requestVolumeAccessibilityService" -> {
+                        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                        result.success(isVolumeAccessibilityServiceEnabled())
                     }
                     "startOrUpdateBackgroundService" -> {
                         val args = call.arguments as? Map<*, *>
@@ -172,6 +180,22 @@ class MainActivity : FlutterFragmentActivity() {
         val intent = Intent(this, BackgroundAudioService::class.java).apply {
             action = BackgroundAudioService.ACTION_START_OR_UPDATE
             putExtra(
+                BackgroundAudioService.EXTRA_VOLUME_UP_PATH,
+                args?.get("volumeUpPath") as? String
+            )
+            putExtra(
+                BackgroundAudioService.EXTRA_VOLUME_UP_LABEL,
+                args?.get("volumeUpLabel") as? String
+            )
+            putExtra(
+                BackgroundAudioService.EXTRA_VOLUME_DOWN_PATH,
+                args?.get("volumeDownPath") as? String
+            )
+            putExtra(
+                BackgroundAudioService.EXTRA_VOLUME_DOWN_LABEL,
+                args?.get("volumeDownLabel") as? String
+            )
+            putExtra(
                 BackgroundAudioService.EXTRA_MEDIA_BUTTON_PATH,
                 args?.get("mediaButtonPath") as? String
             )
@@ -212,6 +236,21 @@ class MainActivity : FlutterFragmentActivity() {
         pendingForegroundServiceIntent = intent
         foregroundServiceStartAttempts = 0
         flushPendingForegroundServiceStart()
+    }
+
+    private fun isVolumeAccessibilityServiceEnabled(): Boolean {
+        val expected = ComponentName(
+            this,
+            VolumeButtonAccessibilityService::class.java
+        ).flattenToString()
+        val enabledServices = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+
+        return enabledServices.split(':').any { service ->
+            service.equals(expected, ignoreCase = true)
+        }
     }
 
     private fun flushPendingForegroundServiceStart() {

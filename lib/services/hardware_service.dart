@@ -1,7 +1,6 @@
 import '../domain/entities/app_settings.dart';
 import 'package:flutter/services.dart';
 
-
 class HardwareService {
   static const MethodChannel _channel = MethodChannel('botonera/hardware');
   Future<void> Function(PhysicalButtonType button)? _onButtonPressed;
@@ -51,13 +50,29 @@ class HardwareService {
   }
 
   Future<bool> requestNotificationPermission() async {
-    return await _channel.invokeMethod<bool>(
-          'requestNotificationPermission',
-        ) ??
+    return await _channel.invokeMethod<bool>('requestNotificationPermission') ??
         true;
   }
 
+  Future<bool> isVolumeAccessibilityServiceEnabled() async {
+    return await _channel.invokeMethod<bool>(
+          'isVolumeAccessibilityServiceEnabled',
+        ) ??
+        false;
+  }
+
+  Future<bool> requestVolumeAccessibilityService() async {
+    return await _channel.invokeMethod<bool>(
+          'requestVolumeAccessibilityService',
+        ) ??
+        false;
+  }
+
   Future<void> startOrUpdateBackgroundService({
+    required String? volumeUpPath,
+    required String? volumeUpLabel,
+    required String? volumeDownPath,
+    required String? volumeDownLabel,
     required String? mediaButtonPath,
     required String? mediaButtonLabel,
     required String? notification1Path,
@@ -69,6 +84,10 @@ class HardwareService {
     required bool shakeEnabled,
   }) async {
     await _channel.invokeMethod<void>('startOrUpdateBackgroundService', {
+      'volumeUpPath': volumeUpPath,
+      'volumeUpLabel': volumeUpLabel,
+      'volumeDownPath': volumeDownPath,
+      'volumeDownLabel': volumeDownLabel,
       'mediaButtonPath': mediaButtonPath,
       'mediaButtonLabel': mediaButtonLabel,
       'notification1Path': notification1Path,

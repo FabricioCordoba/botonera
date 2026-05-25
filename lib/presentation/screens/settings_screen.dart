@@ -18,7 +18,9 @@ class SettingsScreen extends ConsumerWidget {
       children: [
         Text(
           'Configuracion',
-          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
         ),
         const SizedBox(height: 18),
         _Panel(
@@ -31,7 +33,9 @@ class SettingsScreen extends ConsumerWidget {
                 value: controller.settings.globalVolume,
                 onChanged: controller.updateGlobalVolume,
               ),
-              trailing: Text('${(controller.settings.globalVolume * 100).round()}%'),
+              trailing: Text(
+                '${(controller.settings.globalVolume * 100).round()}%',
+              ),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
@@ -64,12 +68,22 @@ class SettingsScreen extends ConsumerWidget {
             const SizedBox(height: 8),
             SegmentedButton<SoundButtonSize>(
               segments: const [
-                ButtonSegment(value: SoundButtonSize.small, label: Text('Pequeno')),
-                ButtonSegment(value: SoundButtonSize.medium, label: Text('Mediano')),
-                ButtonSegment(value: SoundButtonSize.large, label: Text('Grande')),
+                ButtonSegment(
+                  value: SoundButtonSize.small,
+                  label: Text('Pequeno'),
+                ),
+                ButtonSegment(
+                  value: SoundButtonSize.medium,
+                  label: Text('Mediano'),
+                ),
+                ButtonSegment(
+                  value: SoundButtonSize.large,
+                  label: Text('Grande'),
+                ),
               ],
               selected: {controller.settings.buttonSize},
-              onSelectionChanged: (value) => controller.updateButtonSize(value.first),
+              onSelectionChanged: (value) =>
+                  controller.updateButtonSize(value.first),
             ),
           ],
         ),
@@ -80,11 +94,13 @@ class SettingsScreen extends ConsumerWidget {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Activar controles fisicos'),
-              subtitle: Text(controller.settings.physicalControlsEnabled
-                  ? controller.bannerMessage == null
-                      ? 'Asignaciones activas para pruebas y futura integracion nativa.'
-                      : controller.bannerMessage!
-                  : 'Activalo para asignar y probar botones desde la app.'),
+              subtitle: Text(
+                controller.settings.physicalControlsEnabled
+                    ? controller.bannerMessage == null
+                          ? 'Asignaciones activas para pruebas y futura integracion nativa.'
+                          : controller.bannerMessage!
+                    : 'Activalo para asignar y probar botones desde la app.',
+              ),
               value: controller.settings.physicalControlsEnabled,
               onChanged: controller.updatePhysicalControls,
             ),
@@ -165,20 +181,46 @@ class SettingsScreen extends ConsumerWidget {
                       await controller.requestBatteryOptimizationExemption();
                     },
             ),
+            _StatusTile(
+              title: 'Accesibilidad volumen',
+              value: controller.volumeAccessibilityEnabled
+                  ? 'Activada'
+                  : 'Pendiente',
+              actionLabel: controller.volumeAccessibilityEnabled
+                  ? 'Listo'
+                  : 'Abrir ajustes',
+              onPressed: controller.volumeAccessibilityEnabled
+                  ? null
+                  : () async {
+                      await controller.requestVolumeAccessibilityService();
+                    },
+            ),
             const SizedBox(height: 10),
+            Text(
+              'Para usar Volumen + y Volumen - con el telefono bloqueado, habilita "Botonera: botones de volumen" en Accesibilidad.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 14),
             _SoundAssignmentField(
               title: 'Boton multimedia del auricular',
-              description: 'Responde a play, pause, siguiente y anterior cuando el servicio esta activo.',
-              selectedSoundId:
-                  controller.assignedSoundIdForButton(PhysicalButtonType.headset),
+              description:
+                  'Responde a play, pause, siguiente y anterior cuando el servicio esta activo.',
+              selectedSoundId: controller.assignedSoundIdForButton(
+                PhysicalButtonType.headset,
+              ),
               sounds: controller.sounds,
-              onChanged: (soundId) =>
-                  controller.assignPhysicalButtonSound(PhysicalButtonType.headset, soundId),
+              onChanged: (soundId) => controller.assignPhysicalButtonSound(
+                PhysicalButtonType.headset,
+                soundId,
+              ),
             ),
             const SizedBox(height: 14),
             _SoundAssignmentField(
               title: 'Notificacion: Sonido 1',
-              description: 'Boton en la notificacion para disparar un sonido con el telefono bloqueado.',
+              description:
+                  'Boton en la notificacion para disparar un sonido con el telefono bloqueado.',
               selectedSoundId: controller.notificationSound1AssignedId(),
               sounds: controller.sounds,
               onChanged: controller.assignNotificationSound1,
@@ -186,7 +228,8 @@ class SettingsScreen extends ConsumerWidget {
             const SizedBox(height: 14),
             _SoundAssignmentField(
               title: 'Notificacion: Sonido 2',
-              description: 'Segundo boton en la notificacion para disparar otro sonido con el telefono bloqueado.',
+              description:
+                  'Segundo boton en la notificacion para disparar otro sonido con el telefono bloqueado.',
               selectedSoundId: controller.notificationSound2AssignedId(),
               sounds: controller.sounds,
               onChanged: controller.assignNotificationSound2,
@@ -194,7 +237,8 @@ class SettingsScreen extends ConsumerWidget {
             const SizedBox(height: 14),
             _SoundAssignmentField(
               title: 'Agitacion',
-              description: 'Usa el acelerometro en segundo plano mientras el servicio esta activo.',
+              description:
+                  'Usa el acelerometro en segundo plano mientras el servicio esta activo.',
               selectedSoundId: controller.shakeAssignedSoundId(),
               sounds: controller.sounds,
               onChanged: controller.assignShakeSound,
@@ -208,7 +252,9 @@ class SettingsScreen extends ConsumerWidget {
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Audios personalizados'),
-              trailing: Text('${controller.customSoundCount}/${controller.settings.maxCustomSounds}'),
+              trailing: Text(
+                '${controller.customSoundCount}/${controller.settings.maxCustomSounds}',
+              ),
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -301,7 +347,9 @@ class _SoundAssignmentField extends StatelessWidget {
       children: [
         Text(
           title,
-          style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
         ),
         const SizedBox(height: 4),
         Text(
@@ -365,7 +413,9 @@ class _PhysicalButtonAssignment extends StatelessWidget {
         children: [
           Text(
             button.label,
-            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
@@ -430,7 +480,9 @@ class _Panel extends StatelessWidget {
         children: [
           Text(
             title,
-            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: 12),
           ...children,

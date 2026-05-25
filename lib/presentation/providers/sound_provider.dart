@@ -37,10 +37,10 @@ class SoundProvider extends ChangeNotifier {
     required FileStorage fileStorage,
     required AudioService audioService,
     required HardwareService hardwareService,
-  })  : _database = database,
-        _fileStorage = fileStorage,
-        _audioService = audioService,
-        _hardwareService = hardwareService;
+  }) : _database = database,
+       _fileStorage = fileStorage,
+       _audioService = audioService,
+       _hardwareService = hardwareService;
 
   final LocalDb _database;
   final FileStorage _fileStorage;
@@ -84,6 +84,7 @@ class SoundProvider extends ChangeNotifier {
   Timer? _errorTimer;
   bool notificationPermissionGranted = true;
   bool batteryOptimizationIgnored = false;
+  bool volumeAccessibilityEnabled = false;
 
   List<SoundCategory> get visibleCategories => categories;
 
@@ -97,7 +98,8 @@ class SoundProvider extends ChangeNotifier {
 
     final filtered = sounds.where((sound) {
       final matchesCategory = sound.categoryId == selectedCategoryId;
-      final matchesSearch = searchQuery.isEmpty ||
+      final matchesSearch =
+          searchQuery.isEmpty ||
           sound.name.toLowerCase().contains(searchQuery.toLowerCase());
       return matchesCategory && matchesSearch;
     }).toList();
@@ -314,7 +316,9 @@ class SoundProvider extends ChangeNotifier {
       lastPlayedAt: DateTime.now(),
     );
     await _database.upsertSound(updated);
-    sounds = sounds.map((item) => item.id == updated.id ? updated : item).toList();
+    sounds = sounds
+        .map((item) => item.id == updated.id ? updated : item)
+        .toList();
     recentHistoryIds = [
       updated.id,
       ...recentHistoryIds.where((id) => id != updated.id),
@@ -334,7 +338,9 @@ class SoundProvider extends ChangeNotifier {
     }
 
     await stopPlayback();
-    final currentIndex = categories.indexWhere((item) => item.id == selectedCategoryId);
+    final currentIndex = categories.indexWhere(
+      (item) => item.id == selectedCategoryId,
+    );
     final nextIndex = (currentIndex + 1) % categories.length;
     selectedCategoryId = categories[nextIndex].id;
     notifyListeners();
@@ -346,8 +352,12 @@ class SoundProvider extends ChangeNotifier {
     }
 
     await stopPlayback();
-    final currentIndex = categories.indexWhere((item) => item.id == selectedCategoryId);
-    final previousIndex = currentIndex == 0 ? categories.length - 1 : currentIndex - 1;
+    final currentIndex = categories.indexWhere(
+      (item) => item.id == selectedCategoryId,
+    );
+    final previousIndex = currentIndex == 0
+        ? categories.length - 1
+        : currentIndex - 1;
     selectedCategoryId = categories[previousIndex].id;
     notifyListeners();
   }
@@ -360,13 +370,17 @@ class SoundProvider extends ChangeNotifier {
   Future<void> toggleFavorite(Sound sound) async {
     final updated = sound.copyWith(isFavorite: !sound.isFavorite);
     await _database.upsertSound(updated);
-    sounds = sounds.map((item) => item.id == sound.id ? updated : item).toList();
+    sounds = sounds
+        .map((item) => item.id == sound.id ? updated : item)
+        .toList();
     notifyListeners();
   }
 
   Future<void> updateSound(Sound updated) async {
     await _database.upsertSound(updated);
-    sounds = sounds.map((item) => item.id == updated.id ? updated : item).toList();
+    sounds = sounds
+        .map((item) => item.id == updated.id ? updated : item)
+        .toList();
     await _refreshStorageUsage();
     notifyListeners();
   }
@@ -430,9 +444,7 @@ class SoundProvider extends ChangeNotifier {
             );
 
       await _recorder.start(
-        RecordConfig(
-          encoder: kIsWeb ? AudioEncoder.opus : AudioEncoder.aacLc,
-        ),
+        RecordConfig(encoder: kIsWeb ? AudioEncoder.opus : AudioEncoder.aacLc),
         path: filePath,
       );
       recordingPath = filePath;
@@ -482,7 +494,8 @@ class SoundProvider extends ChangeNotifier {
     required int colorValue,
   }) async {
     final path = recordingPath;
-    final isWebRecording = kIsWeb &&
+    final isWebRecording =
+        kIsWeb &&
         path != null &&
         (path.startsWith('blob:') || path.startsWith('data:'));
 
@@ -650,7 +663,9 @@ class SoundProvider extends ChangeNotifier {
 
     final sound = assignedSoundForButton(button);
     if (sound == null) {
-      showError('No hay ningun sonido asignado a ${button.label.toLowerCase()}.');
+      showError(
+        'No hay ningun sonido asignado a ${button.label.toLowerCase()}.',
+      );
       return;
     }
 
@@ -668,10 +683,12 @@ class SoundProvider extends ChangeNotifier {
       return;
     }
 
-    notificationPermissionGranted =
-        await _hardwareService.isNotificationPermissionGranted();
-    batteryOptimizationIgnored =
-        await _hardwareService.isIgnoringBatteryOptimizations();
+    notificationPermissionGranted = await _hardwareService
+        .isNotificationPermissionGranted();
+    batteryOptimizationIgnored = await _hardwareService
+        .isIgnoringBatteryOptimizations();
+    volumeAccessibilityEnabled = await _hardwareService
+        .isVolumeAccessibilityServiceEnabled();
   }
 
   Future<bool> requestNotificationPermission() async {
@@ -690,11 +707,22 @@ class SoundProvider extends ChangeNotifier {
       return true;
     }
 
-    final requested =
-        await _hardwareService.requestIgnoreBatteryOptimizations();
+    final requested = await _hardwareService
+        .requestIgnoreBatteryOptimizations();
     await _refreshAndroidCapabilities();
     notifyListeners();
     return requested;
+  }
+
+  Future<bool> requestVolumeAccessibilityService() async {
+    if (kIsWeb || !Platform.isAndroid) {
+      return true;
+    }
+
+    await _hardwareService.requestVolumeAccessibilityService();
+    await _refreshAndroidCapabilities();
+    notifyListeners();
+    return volumeAccessibilityEnabled;
   }
 
   Future<void> _syncBackgroundService({bool showFeedback = true}) async {
@@ -707,6 +735,10 @@ class SoundProvider extends ChangeNotifier {
       return;
     }
 
+    final volumeUpSound = assignedSoundForButton(PhysicalButtonType.volumeUp);
+    final volumeDownSound = assignedSoundForButton(
+      PhysicalButtonType.volumeDown,
+    );
     final headsetSound = assignedSoundForButton(PhysicalButtonType.headset);
     Sound? shakeSound;
     if (settings.shakeEnabled && settings.shakeSoundId != null) {
@@ -718,10 +750,15 @@ class SoundProvider extends ChangeNotifier {
       }
     }
 
-    if (headsetSound == null && shakeSound == null) {
+    if (volumeUpSound == null &&
+        volumeDownSound == null &&
+        headsetSound == null &&
+        shakeSound == null) {
       await _hardwareService.stopBackgroundService();
       if (showFeedback) {
-        showError('Asigna un sonido al auricular o a shake para usar segundo plano.');
+        showError(
+          'Asigna un sonido a volumen, auricular o shake para usar segundo plano.',
+        );
       }
       return;
     }
@@ -748,11 +785,28 @@ class SoundProvider extends ChangeNotifier {
 
     if (!notificationPermissionGranted) {
       if (showFeedback) {
-        showError('Hace falta permiso de notificaciones para iniciar el servicio.');
+        showError(
+          'Hace falta permiso de notificaciones para iniciar el servicio.',
+        );
       }
       return;
     }
 
+    if ((volumeUpSound != null || volumeDownSound != null) &&
+        !volumeAccessibilityEnabled) {
+      if (showFeedback) {
+        showError(
+          'Activa el servicio de accesibilidad para usar Volumen + y Volumen - bloqueado.',
+        );
+      }
+    }
+
+    final volumeUpPath = volumeUpSound == null
+        ? null
+        : await _fileStorage.ensurePlayableFilePath(volumeUpSound);
+    final volumeDownPath = volumeDownSound == null
+        ? null
+        : await _fileStorage.ensurePlayableFilePath(volumeDownSound);
     final mediaPath = headsetSound == null
         ? null
         : await _fileStorage.ensurePlayableFilePath(headsetSound);
@@ -767,6 +821,10 @@ class SoundProvider extends ChangeNotifier {
         : await _fileStorage.ensurePlayableFilePath(notifSound2);
 
     await _hardwareService.startOrUpdateBackgroundService(
+      volumeUpPath: volumeUpPath,
+      volumeUpLabel: volumeUpSound?.name,
+      volumeDownPath: volumeDownPath,
+      volumeDownLabel: volumeDownSound?.name,
       mediaButtonPath: mediaPath,
       mediaButtonLabel: headsetSound?.name,
       shakePath: shakePath,
