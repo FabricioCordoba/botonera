@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Soundboard Epico</string>
+    <string name="volume_button_accessibility_label">Botonera: botones de volumen</string>
+    <string name="volume_button_accessibility_description">Permite usar Volumen + y Volumen - para disparar sonidos con el telefono bloqueado.</string>
+</resources>
