@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -208,6 +209,10 @@ class BackgroundAudioService : Service(), SensorEventListener {
             return
         }
 
+        if (!shouldHandleBackgroundTrigger()) {
+            return
+        }
+
         val x = event.values[0]
         val y = event.values[1]
         val z = event.values[2]
@@ -271,6 +276,11 @@ class BackgroundAudioService : Service(), SensorEventListener {
                     syntheticRemoteVolume = (syntheticRemoteVolume + direction).coerceIn(0, 100)
                     currentVolume = syntheticRemoteVolume
 
+                    if (!shouldHandleBackgroundTrigger()) {
+                        Log.d(TAG, "ignoring media session volume while device is unlocked")
+                        return
+                    }
+
                     when {
                         direction > 0 -> {
                             Log.d(TAG, "media session volume up path=${volumeUpPath != null}")
@@ -289,6 +299,11 @@ class BackgroundAudioService : Service(), SensorEventListener {
     }
 
     private fun triggerMediaButtonSound() {
+        if (!shouldHandleBackgroundTrigger()) {
+            Log.d(TAG, "ignoring media button while device is unlocked")
+            return
+        }
+
         playPath(mediaButtonPath)
     }
 
@@ -366,6 +381,11 @@ class BackgroundAudioService : Service(), SensorEventListener {
             return
         }
         lastVolumeObserverTriggerMs = now
+
+        if (!shouldHandleBackgroundTrigger()) {
+            Log.d(TAG, "ignoring observed volume change while device is unlocked")
+            return
+        }
 
         if (currentVolume > previousVolume) {
             Log.d(TAG, "observed volume up stream=$changedStream $previousVolume->$currentVolume")
@@ -551,6 +571,12 @@ class BackgroundAudioService : Service(), SensorEventListener {
 
     private fun hasVolumeButtonSounds(): Boolean {
         return !volumeUpPath.isNullOrBlank() || !volumeDownPath.isNullOrBlank()
+    }
+
+    private fun shouldHandleBackgroundTrigger(): Boolean {
+        val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        return keyguardManager.isKeyguardLocked || !powerManager.isInteractive
     }
 
     private fun buildNotification(): Notification {

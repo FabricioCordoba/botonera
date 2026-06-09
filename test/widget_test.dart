@@ -28,7 +28,7 @@ void main() {
     expect(find.text('Inicio'), findsOneWidget);
     expect(find.text('Config'), findsOneWidget);
     expect(find.text('Por defecto'), findsOneWidget);
-    expect(find.text('EPICO FAIL'), findsOneWidget);
+    expect(find.text('BOCINA'), findsOneWidget);
   });
 }
 
@@ -59,12 +59,12 @@ class _FakeSoundProvider extends SoundProvider {
     ];
     sounds = const [
       Sound(
-        id: 'epic_fail',
-        name: 'EPICO FAIL',
+        id: 'asset_bocina',
+        name: 'BOCINA',
         emoji: '💥',
         colorValue: 0xFFF97316,
         categoryId: 'default',
-        source: 'assets/sounds/penal_para_river.mp3',
+        source: 'assets/sounds/bocina.mp3',
         isAsset: true,
         isDefault: true,
       ),
