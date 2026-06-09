@@ -49,6 +49,31 @@ class SoundProvider extends ChangeNotifier {
   final AudioRecorder _recorder = AudioRecorder();
   final Uuid _uuid = const Uuid();
 
+  // FIX #3 #5: Logging and search caching
+  Timer? _searchDebounce;
+  String _lastCachedQuery = '';
+  List<Sound>? _cachedFilteredSounds;
+
+  // FIX #6: Category count cache
+  final Map<String, int> _soundCountByCategory = {};
+
+  // FIX #3: Centralized logging helpers
+  void _logError(String msg, [Object? err, StackTrace? st]) {
+    if (kDebugMode) {
+      debugPrint('❌ $msg');
+      if (err != null) debugPrint('   → $err');
+      if (st != null) debugPrintStack(stackTrace: st);
+    }
+  }
+
+  void _logWarning(String msg) {
+    if (kDebugMode) debugPrint('⚠️ $msg');
+  }
+
+  void _logInfo(String msg) {
+    if (kDebugMode) debugPrint('ℹ️ $msg');
+  }
+
   static const String _prefsTheme = 'theme_mode';
   static const String _prefsVolume = 'global_volume';
   static const String _prefsVibration = 'vibration_enabled';
@@ -59,11 +84,7 @@ class SoundProvider extends ChangeNotifier {
   static const String _prefsLocale = 'locale_code';
   static const String _prefsVolumeUpSound = 'physical_volume_up_sound_id';
   static const String _prefsVolumeDownSound = 'physical_volume_down_sound_id';
-  static const String _prefsHeadsetSound = 'physical_headset_sound_id';
   static const String _prefsShakeSound = 'background_shake_sound_id';
-  static const String _prefsLockSound = 'lock_sound_id';
-  static const String _prefsNotificationSound1 = 'notification_sound_1_id';
-  static const String _prefsNotificationSound2 = 'notification_sound_2_id';
   static const String _prefsHistory = 'recent_history';
 
   bool isInitialized = false;
@@ -114,6 +135,11 @@ class SoundProvider extends ChangeNotifier {
   }
 
   List<Sound> get allSoundsFiltered {
+    // FIX #5: Cache - Si query es la misma, devolver cached
+    if (_lastCachedQuery == searchQuery && _cachedFilteredSounds != null) {
+      return _cachedFilteredSounds!;
+    }
+
     final filtered = sounds.where((sound) {
       if (searchQuery.isEmpty) {
         return true;
@@ -121,6 +147,11 @@ class SoundProvider extends ChangeNotifier {
       return sound.name.toLowerCase().contains(searchQuery.toLowerCase());
     }).toList();
     filtered.sort((a, b) => a.name.compareTo(b.name));
+    
+    // FIX #5: Cache result
+    _lastCachedQuery = searchQuery;
+    _cachedFilteredSounds = filtered;
+    
     return filtered;
   }
 
@@ -143,13 +174,18 @@ class SoundProvider extends ChangeNotifier {
       await _database.init();
       await _database.seedDefaults(
         categories: _defaultCategories,
-        sounds: _defaultSounds,
+        sounds: const [],
       );
       await _loadSettings();
+      recentHistoryIds = await _readHistory();
+      await _syncSoundLibraryFromStorage();
       categories = await _database.getCategories();
       sounds = await _database.getSounds();
+      
+      // FIX #6: Initialize category count cache
+      await _updateCategoryCounts();
+      
       selectedCategoryId = categories.isEmpty ? null : categories.first.id;
-      recentHistoryIds = await _readHistory();
       await _audioService.preload(sounds);
       await _audioService.setGlobalVolume(settings.globalVolume);
       await _hardwareService.initialize(
@@ -160,14 +196,21 @@ class SoundProvider extends ChangeNotifier {
       await _syncBackgroundService(showFeedback: false);
       await _refreshStorageUsage();
       isInitialized = true;
+      _logInfo('SoundProvider initialized successfully');
       notifyListeners();
-    } catch (_) {
+    } catch (e, st) {
+      _logError('Error initializing provider', e, st);
       showError(
         'No pude inicializar la app completa. Algunas funciones pueden estar limitadas.',
       );
       categories = _defaultCategories;
-      sounds = _defaultSounds;
-      selectedCategoryId = categories.first.id;
+      try {
+        sounds = await _discoverBundledSounds();
+      } catch (e2) {
+        _logError('Error discovering bundled sounds', e2);
+        sounds = const [];
+      }
+      selectedCategoryId = categories.isEmpty ? null : categories.first.id;
       isInitialized = true;
       notifyListeners();
     }
@@ -188,13 +231,14 @@ class SoundProvider extends ChangeNotifier {
         localeCode: prefs.getString(_prefsLocale) ?? 'es',
         volumeUpSoundId: prefs.getString(_prefsVolumeUpSound),
         volumeDownSoundId: prefs.getString(_prefsVolumeDownSound),
-        headsetSoundId: prefs.getString(_prefsHeadsetSound),
         shakeSoundId: prefs.getString(_prefsShakeSound),
-        lockScreenSoundId: prefs.getString(_prefsLockSound),
-        notificationSound1Id: prefs.getString(_prefsNotificationSound1),
-        notificationSound2Id: prefs.getString(_prefsNotificationSound2),
       );
-    } catch (_) {
+      _logInfo('Settings loaded successfully');
+    } on PlatformException catch (e) {
+      _logError('Platform error loading settings: ${e.message}', e);
+      settings = const AppSettings();
+    } catch (e, st) {
+      _logError('Error loading settings', e, st);
       settings = const AppSettings();
     }
   }
@@ -225,30 +269,12 @@ class SoundProvider extends ChangeNotifier {
       );
       await _persistNullableString(
         prefs,
-        _prefsHeadsetSound,
-        settings.headsetSoundId,
-      );
-      await _persistNullableString(
-        prefs,
         _prefsShakeSound,
         settings.shakeSoundId,
       );
-      await _persistNullableString(
-        prefs,
-        _prefsLockSound,
-        settings.lockScreenSoundId,
-      );
-      await _persistNullableString(
-        prefs,
-        _prefsNotificationSound1,
-        settings.notificationSound1Id,
-      );
-      await _persistNullableString(
-        prefs,
-        _prefsNotificationSound2,
-        settings.notificationSound2Id,
-      );
-    } catch (_) {}
+    } catch (e, st) {
+      _logError('Error persisting settings', e, st);
+    }
   }
 
   Future<void> _persistNullableString(
@@ -280,6 +306,9 @@ class SoundProvider extends ChangeNotifier {
   }
 
   Future<void> playSound(Sound sound) async {
+    // FIX #1: Stop playback first to avoid race condition
+    await stopPlayback();
+    
     currentlyPlayingId = sound.id;
     notifyListeners();
 
@@ -296,34 +325,60 @@ class SoundProvider extends ChangeNotifier {
       clearBanner(notify: false);
       await _audioService.play(sound);
       await _markSoundPlayed(sound);
-    } catch (_) {
+    } on PlatformException catch (e) {
+      _logError('Audio platform error', e);
       showError('No pude reproducir "${sound.name}".');
-    } finally {
+      currentlyPlayingId = null;
+      notifyListeners();
+    } catch (e, st) {
+      _logError('Error reproduciendo sonido', e, st);
+      showError('Error inesperado.');
       currentlyPlayingId = null;
       notifyListeners();
     }
+    // FIX #1: Don't clear here - let AudioPlayer notify completion
   }
 
   Future<void> stopPlayback() async {
-    await _audioService.stopAll();
+    try {
+      await _audioService.stopAll();
+    } catch (e) {
+      _logWarning('Error stopping playback: $e');
+    }
     currentlyPlayingId = null;
     notifyListeners();
   }
 
   Future<void> _markSoundPlayed(Sound sound) async {
-    final updated = sound.copyWith(
-      playCount: sound.playCount + 1,
-      lastPlayedAt: DateTime.now(),
-    );
-    await _database.upsertSound(updated);
-    sounds = sounds
-        .map((item) => item.id == updated.id ? updated : item)
-        .toList();
-    recentHistoryIds = [
-      updated.id,
-      ...recentHistoryIds.where((id) => id != updated.id),
-    ].take(10).toList();
-    await _persistHistory();
+    try {
+      final updated = sound.copyWith(
+        playCount: sound.playCount + 1,
+        lastPlayedAt: DateTime.now(),
+      );
+      await _database.upsertSound(updated);
+      
+      // FIX #7: Verify sound exists in memory list
+      final index = sounds.indexWhere((s) => s.id == updated.id);
+      if (index >= 0) {
+        final newList = [...sounds];
+        newList[index] = updated;
+        sounds = newList;
+      } else {
+        // Sound not found - reload from DB
+        _logWarning('Sound not found in memory after playing, reloading');
+        sounds = await _database.getSounds();
+      }
+      
+      recentHistoryIds = [
+        updated.id,
+        ...recentHistoryIds.where((id) => id != updated.id),
+      ].take(10).toList();
+      
+      await _persistHistory();
+      notifyListeners();
+    } catch (e, st) {
+      _logError('Error marking sound as played', e, st);
+    }
   }
 
   Future<void> selectCategory(String categoryId) async {
@@ -363,8 +418,14 @@ class SoundProvider extends ChangeNotifier {
   }
 
   void setSearchQuery(String value) {
-    searchQuery = value;
-    notifyListeners();
+    // FIX #5: Debounce search queries
+    _searchDebounce?.cancel();
+    
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      searchQuery = value;
+      _lastCachedQuery = ''; // Invalidate cache
+      notifyListeners();
+    });
   }
 
   Future<void> toggleFavorite(Sound sound) async {
@@ -386,48 +447,79 @@ class SoundProvider extends ChangeNotifier {
   }
 
   Future<void> deleteSound(Sound sound) async {
+    // FIX #10: Feedback cuando se intenta eliminar sonido por defecto
     if (sound.isDefault) {
+      showError('No puedes eliminar audios por defecto.');
       return;
     }
 
-    await _database.deleteSound(sound.id);
-    await _fileStorage.deleteIfExists(sound.source);
-    sounds = sounds.where((item) => item.id != sound.id).toList();
-    recentHistoryIds = recentHistoryIds.where((id) => id != sound.id).toList();
-    await _persistHistory();
-    await _refreshStorageUsage();
-    notifyListeners();
+    try {
+      await _database.deleteSound(sound.id);
+      await _fileStorage.deleteIfExists(sound.source);
+      sounds = sounds.where((item) => item.id != sound.id).toList();
+      recentHistoryIds = recentHistoryIds.where((id) => id != sound.id).toList();
+      
+      // FIX #6: Update category cache
+      _soundCountByCategory[sound.categoryId] =
+          (_soundCountByCategory[sound.categoryId] ?? 1) - 1;
+      
+      await _persistHistory();
+      await _refreshStorageUsage();
+      showSuccess('Audio "${sound.name}" eliminado.');
+      notifyListeners();
+    } catch (e, st) {
+      _logError('Error eliminando sonido', e, st);
+      showError('No pude eliminar el audio. Intenta de nuevo.');
+    }
   }
 
   Future<void> importCustomSound() async {
     if (customSoundCount >= settings.maxCustomSounds) {
       showError(
-        'Llegaste al limite de ${settings.maxCustomSounds} audios personalizados.',
+        'Llegaste al límite de ${settings.maxCustomSounds} audios personalizados.',
       );
       return;
     }
 
-    final imported = await _fileStorage.importAudioFile();
-    if (imported == null) {
-      return;
-    }
-
-    final sound = Sound(
-      id: _uuid.v4(),
-      name: p.basenameWithoutExtension(imported.name).replaceAll('_', ' '),
-      emoji: '🎙',
-      colorValue: const Color(0xFF3B82F6).toARGB32(),
-      categoryId: _customCategoryId,
-      source: imported.source,
-      isAsset: false,
-      isDefault: false,
-      createdAt: DateTime.now(),
-    );
-    await _database.upsertSound(sound);
-    sounds = [...sounds, sound];
-    await _refreshStorageUsage();
-    showSuccess('Audio importado correctamente.');
+    isBusy = true;
     notifyListeners();
+
+    try {
+      final imported = await _fileStorage.importAudioFile();
+      if (imported == null) {
+        return;
+      }
+
+      // FIX #9: Don't reload everything, just add locally
+      final newSound = Sound(
+        id: _uuid.v4(),
+        name: imported.name,
+        emoji: '🎵',
+        colorValue: 0xFF7C3AED,
+        categoryId: _customCategoryId,
+        source: imported.source,
+        isAsset: false,
+        isDefault: false,
+        createdAt: DateTime.now(),
+      );
+
+      await _database.upsertSound(newSound);
+      sounds = [...sounds, newSound];
+      
+      // FIX #6: Update cache
+      _soundCountByCategory[_customCategoryId] =
+          (_soundCountByCategory[_customCategoryId] ?? 0) + 1;
+      
+      await _refreshStorageUsage();
+      showSuccess('Audio "${newSound.name}" importado correctamente.');
+      notifyListeners();
+    } catch (e, st) {
+      _logError('Error importando sonido', e, st);
+      showError('No pude importar el audio. Intenta de nuevo.');
+    } finally {
+      isBusy = false;
+      notifyListeners();
+    }
   }
 
   Future<void> startRecording() async {
@@ -499,29 +591,71 @@ class SoundProvider extends ChangeNotifier {
         path != null &&
         (path.startsWith('blob:') || path.startsWith('data:'));
 
-    if (path == null || (!isWebRecording && !File(path).existsSync())) {
-      showError('Todavia no hay grabacion para guardar.');
+    if (path == null) {
+      showError('Todavía no hay grabación para guardar.');
       return;
     }
 
-    final sound = Sound(
-      id: _uuid.v4(),
-      name: name.trim().isEmpty ? 'Nueva frase' : name.trim(),
-      emoji: emoji,
-      colorValue: colorValue,
-      categoryId: _customCategoryId,
-      source: path,
-      isAsset: false,
-      isDefault: false,
-      createdAt: DateTime.now(),
-    );
-    await _database.upsertSound(sound);
-    sounds = [...sounds, sound];
-    recordingPath = null;
-    recordingPreviewName = null;
-    await _refreshStorageUsage();
-    showSuccess('Audio guardado correctamente.');
-    notifyListeners();
+    // FIX #4: Safe file existence check
+    if (!isWebRecording) {
+      try {
+        final exists = await File(path).exists();
+        if (!exists) {
+          showError('El archivo de grabación ya no existe.');
+          recordingPath = null;
+          notifyListeners();
+          return;
+        }
+      } catch (e) {
+        _logError('Error verificando grabación', e);
+        showError('Error al verificar la grabación.');
+        return;
+      }
+    }
+
+    // FIX #8: Input validation
+    if (name.trim().isEmpty && emoji.isEmpty) {
+      showError('Debes ingresar un nombre o emoji válido.');
+      return;
+    }
+
+    try {
+      final sound = Sound(
+        id: _uuid.v4(),
+        name: name.trim().isEmpty ? 'Nueva frase' : name.trim(),
+        emoji: emoji.isEmpty ? '🎙' : emoji,
+        colorValue: _validateColorValue(colorValue),
+        categoryId: _customCategoryId,
+        source: path,
+        isAsset: false,
+        isDefault: false,
+        createdAt: DateTime.now(),
+      );
+      
+      await _database.upsertSound(sound);
+      sounds = [...sounds, sound];
+      recordingPath = null;
+      recordingPreviewName = null;
+      
+      // FIX #6: Update cache
+      _soundCountByCategory[_customCategoryId] =
+          (_soundCountByCategory[_customCategoryId] ?? 0) + 1;
+      
+      await _refreshStorageUsage();
+      showSuccess('Audio guardado correctamente.');
+      notifyListeners();
+    } catch (e, st) {
+      _logError('Error guardando grabación', e, st);
+      showError('Error al guardar la grabación.');
+    }
+  }
+
+  // FIX #8: Helper to validate color value
+  int _validateColorValue(int value) {
+    if (value < 0 || value > 0xFFFFFFFF) {
+      return 0xFF7C3AED; // Default purple
+    }
+    return value;
   }
 
   Future<void> clearHistory() async {
@@ -582,17 +716,10 @@ class SoundProvider extends ChangeNotifier {
         return settings.volumeUpSoundId;
       case PhysicalButtonType.volumeDown:
         return settings.volumeDownSoundId;
-      case PhysicalButtonType.headset:
-        return settings.headsetSoundId;
-      case PhysicalButtonType.lock:
-        return settings.lockScreenSoundId;
     }
   }
 
   String? shakeAssignedSoundId() => settings.shakeSoundId;
-
-  String? notificationSound1AssignedId() => settings.notificationSound1Id;
-  String? notificationSound2AssignedId() => settings.notificationSound2Id;
 
   Sound? assignedSoundForButton(PhysicalButtonType button) {
     final soundId = assignedSoundIdForButton(button);
@@ -618,38 +745,14 @@ class SoundProvider extends ChangeNotifier {
       case PhysicalButtonType.volumeDown:
         settings = settings.copyWith(volumeDownSoundId: soundId);
         break;
-      case PhysicalButtonType.headset:
-        settings = settings.copyWith(headsetSoundId: soundId);
-        break;
-      case PhysicalButtonType.lock:
-        settings = settings.copyWith(lockScreenSoundId: soundId);
-        break;
     }
     await _persistSettings();
     await _syncBackgroundService(showFeedback: false);
     notifyListeners();
   }
 
-  Future<void> assignLockScreenSound(String? soundId) async {
-    await assignPhysicalButtonSound(PhysicalButtonType.lock, soundId);
-  }
-
   Future<void> assignShakeSound(String? soundId) async {
     settings = settings.copyWith(shakeSoundId: soundId);
-    await _persistSettings();
-    await _syncBackgroundService(showFeedback: false);
-    notifyListeners();
-  }
-
-  Future<void> assignNotificationSound1(String? soundId) async {
-    settings = settings.copyWith(notificationSound1Id: soundId);
-    await _persistSettings();
-    await _syncBackgroundService(showFeedback: false);
-    notifyListeners();
-  }
-
-  Future<void> assignNotificationSound2(String? soundId) async {
-    settings = settings.copyWith(notificationSound2Id: soundId);
     await _persistSettings();
     await _syncBackgroundService(showFeedback: false);
     notifyListeners();
@@ -739,7 +842,6 @@ class SoundProvider extends ChangeNotifier {
     final volumeDownSound = assignedSoundForButton(
       PhysicalButtonType.volumeDown,
     );
-    final headsetSound = assignedSoundForButton(PhysicalButtonType.headset);
     Sound? shakeSound;
     if (settings.shakeEnabled && settings.shakeSoundId != null) {
       for (final sound in sounds) {
@@ -752,35 +854,14 @@ class SoundProvider extends ChangeNotifier {
 
     if (volumeUpSound == null &&
         volumeDownSound == null &&
-        headsetSound == null &&
         shakeSound == null) {
       await _hardwareService.stopBackgroundService();
       if (showFeedback) {
         showError(
-          'Asigna un sonido a volumen, auricular o shake para usar segundo plano.',
+          'Asigna un sonido a volumen o shake para usar segundo plano.',
         );
       }
       return;
-    }
-
-    Sound? notifSound1;
-    if (settings.notificationSound1Id != null) {
-      for (final sound in sounds) {
-        if (sound.id == settings.notificationSound1Id) {
-          notifSound1 = sound;
-          break;
-        }
-      }
-    }
-
-    Sound? notifSound2;
-    if (settings.notificationSound2Id != null) {
-      for (final sound in sounds) {
-        if (sound.id == settings.notificationSound2Id) {
-          notifSound2 = sound;
-          break;
-        }
-      }
     }
 
     if (!notificationPermissionGranted) {
@@ -807,33 +888,24 @@ class SoundProvider extends ChangeNotifier {
     final volumeDownPath = volumeDownSound == null
         ? null
         : await _fileStorage.ensurePlayableFilePath(volumeDownSound);
-    final mediaPath = headsetSound == null
-        ? null
-        : await _fileStorage.ensurePlayableFilePath(headsetSound);
     final shakePath = shakeSound == null
         ? null
         : await _fileStorage.ensurePlayableFilePath(shakeSound);
-    final notif1Path = notifSound1 == null
-        ? null
-        : await _fileStorage.ensurePlayableFilePath(notifSound1);
-    final notif2Path = notifSound2 == null
-        ? null
-        : await _fileStorage.ensurePlayableFilePath(notifSound2);
 
     await _hardwareService.startOrUpdateBackgroundService(
       volumeUpPath: volumeUpPath,
       volumeUpLabel: volumeUpSound?.name,
       volumeDownPath: volumeDownPath,
       volumeDownLabel: volumeDownSound?.name,
-      mediaButtonPath: mediaPath,
-      mediaButtonLabel: headsetSound?.name,
+      mediaButtonPath: null,
+      mediaButtonLabel: null,
       shakePath: shakePath,
       shakeLabel: shakeSound?.name,
       shakeEnabled: settings.shakeEnabled,
-      notification1Path: notif1Path,
-      notification1Label: notifSound1?.name,
-      notification2Path: notif2Path,
-      notification2Label: notifSound2?.name,
+      notification1Path: null,
+      notification1Label: null,
+      notification2Path: null,
+      notification2Label: null,
     );
   }
 
@@ -851,6 +923,168 @@ class SoundProvider extends ChangeNotifier {
         .where((sound) => !sound.isAsset)
         .map((sound) => sound.source);
     storageBytes = await _fileStorage.computeStorageBytes(customPaths);
+  }
+
+  Future<void> _syncSoundLibraryFromStorage() async {
+    final discoveredSounds = [
+      ...await _discoverBundledSounds(),
+      ...await _discoverUserSounds(),
+    ];
+    final existingSounds = await _database.getSounds();
+    final existingById = {for (final sound in existingSounds) sound.id: sound};
+    final existingLocalBySource = {
+      for (final sound in existingSounds.where((sound) => !sound.isAsset))
+        sound.source: sound,
+    };
+    final activeIds = <String>{};
+
+    for (final sound in discoveredSounds) {
+      final existing = existingById[sound.id] ??
+          (!sound.isAsset ? existingLocalBySource[sound.source] : null);
+      final syncedSound = existing == null
+          ? sound
+          : sound.copyWith(
+              id: existing.id,
+              name: existing.isAsset ? sound.name : existing.name,
+              emoji: existing.emoji,
+              colorValue: existing.colorValue,
+              isFavorite: existing.isFavorite,
+              playCount: existing.playCount,
+              lastPlayedAt: existing.lastPlayedAt,
+              createdAt: existing.createdAt,
+            );
+      activeIds.add(syncedSound.id);
+      await _database.upsertSound(
+        syncedSound,
+      );
+    }
+
+    for (final sound in existingSounds) {
+      if (!activeIds.contains(sound.id)) {
+        await _database.deleteSound(sound.id);
+      }
+    }
+
+    recentHistoryIds = recentHistoryIds
+        .where((soundId) => activeIds.contains(soundId))
+        .toList();
+    await _persistHistory();
+    await _removeMissingAssignedSounds(activeIds);
+  }
+
+  Future<List<Sound>> _discoverBundledSounds() async {
+    final manifest = await _loadAssetManifest();
+    final paths = manifest
+        .where((path) => path.startsWith('assets/sounds/'))
+        .where(_fileStorage.isSupportedAudioPath)
+        .toList()
+      ..sort();
+
+    return [
+      for (var index = 0; index < paths.length; index++)
+        _soundFromPath(
+          source: paths[index],
+          categoryId: _defaultCategoryId,
+          isAsset: true,
+          isDefault: true,
+          sortIndex: index,
+        ),
+    ];
+  }
+
+  Future<Set<String>> _loadAssetManifest() async {
+    final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+    return manifest.listAssets().toSet();
+  }
+
+  Future<List<Sound>> _discoverUserSounds() async {
+    final files = await _fileStorage.listLocalAudioFiles();
+    return [
+      for (var index = 0; index < files.length; index++)
+        _soundFromPath(
+          source: files[index].path,
+          categoryId: _customCategoryId,
+          isAsset: false,
+          isDefault: false,
+          sortIndex: index,
+        ),
+    ];
+  }
+
+  Sound _soundFromPath({
+    required String source,
+    required String categoryId,
+    required bool isAsset,
+    required bool isDefault,
+    required int sortIndex,
+  }) {
+    final fileName = p.basenameWithoutExtension(source);
+    final idPrefix = isAsset ? 'asset' : 'user';
+    final id = '${idPrefix}_${_slugify(fileName)}';
+    return Sound(
+      id: id,
+      name: _displayNameForFile(fileName),
+      emoji: isAsset ? '🎵' : '🎙',
+      colorValue: _colorForId(id),
+      categoryId: categoryId,
+      source: source,
+      isAsset: isAsset,
+      isDefault: isDefault,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(sortIndex),
+    );
+  }
+
+  String _slugify(String value) {
+    final slug = value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '');
+    return slug.isEmpty ? _uuid.v4() : slug;
+  }
+
+  String _displayNameForFile(String value) {
+    return value
+        .replaceAll(RegExp(r'[_-]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim()
+        .toUpperCase();
+  }
+
+  int _colorForId(String id) {
+    const colors = [
+      0xFFF97316,
+      0xFF7C3AED,
+      0xFFEF4444,
+      0xFF3B82F6,
+      0xFF14B8A6,
+      0xFFEAB308,
+      0xFFEC4899,
+      0xFF22C55E,
+    ];
+    return colors[id.hashCode.abs() % colors.length];
+  }
+
+  Future<void> _removeMissingAssignedSounds(Set<String> soundIds) async {
+    var changed = false;
+    if (settings.volumeUpSoundId != null &&
+        !soundIds.contains(settings.volumeUpSoundId)) {
+      settings = settings.copyWith(volumeUpSoundId: null);
+      changed = true;
+    }
+    if (settings.volumeDownSoundId != null &&
+        !soundIds.contains(settings.volumeDownSoundId)) {
+      settings = settings.copyWith(volumeDownSoundId: null);
+      changed = true;
+    }
+    if (settings.shakeSoundId != null &&
+        !soundIds.contains(settings.shakeSoundId)) {
+      settings = settings.copyWith(shakeSoundId: null);
+      changed = true;
+    }
+    if (changed) {
+      await _persistSettings();
+    }
   }
 
   String formatStorageUsage() {
@@ -898,6 +1132,20 @@ class SoundProvider extends ChangeNotifier {
     }
   }
 
+  // FIX #6: Update category count cache
+  Future<void> _updateCategoryCounts() async {
+    _soundCountByCategory.clear();
+    for (final category in categories) {
+      _soundCountByCategory[category.id] =
+          sounds.where((s) => s.categoryId == category.id).length;
+    }
+  }
+
+  // FIX #6: Get sound count for a category
+  int getSoundCountForCategory(String categoryId) {
+    return _soundCountByCategory[categoryId] ?? 0;
+  }
+
   ThemeMode _themeModeFromString(String? value) {
     return ThemeMode.values.firstWhere(
       (mode) => mode.name == value,
@@ -913,11 +1161,25 @@ class SoundProvider extends ChangeNotifier {
   }
 
   @override
-  void dispose() {
-    _errorTimer?.cancel();
-    unawaited(_audioService.dispose());
-    unawaited(_recorder.dispose());
-    super.dispose();
+  Future<void> dispose() async {
+    try {
+      // FIX #2: Properly clean up resources
+      await _audioService.stopAll();
+      await _audioService.dispose();
+      
+      await _recorder.dispose();
+      
+      await _hardwareService.setEnabled(false);
+      
+      _errorTimer?.cancel();
+      _searchDebounce?.cancel();
+      
+      _logInfo('SoundProvider disposed successfully');
+      super.dispose();
+    } catch (e, st) {
+      _logError('Error in dispose', e, st);
+      super.dispose();
+    }
   }
 }
 
@@ -941,55 +1203,3 @@ const List<SoundCategory> _defaultCategories = [
   ),
 ];
 
-const List<Sound> _defaultSounds = [
-  Sound(
-    id: 'penal_para_river',
-    name: 'PENAL PARA RIVER',
-    emoji: '💥',
-    colorValue: 0xFFF97316,
-    categoryId: _defaultCategoryId,
-    source: 'assets/sounds/penal_para_river.mp3',
-    isAsset: true,
-    isDefault: true,
-  ),
-  Sound(
-    id: 'encara_messi',
-    name: 'ENCARA MESSI',
-    emoji: '🏆',
-    colorValue: 0xFF7C3AED,
-    categoryId: _defaultCategoryId,
-    source: 'assets/sounds/encara_messi.mp3',
-    isAsset: true,
-    isDefault: true,
-  ),
-  Sound(
-    id: 'oh_no',
-    name: 'OH NOOOO',
-    emoji: '😱',
-    colorValue: 0xFFEF4444,
-    categoryId: _defaultCategoryId,
-    source: 'assets/sounds/que_miras_bobo_messi.mp3',
-    isAsset: true,
-    isDefault: true,
-  ),
-  Sound(
-    id: 'que_miras_bobo',
-    name: 'QUE MIRAS BOBO..?',
-    emoji: '🤦',
-    colorValue: 0xFF3B82F6,
-    categoryId: _defaultCategoryId,
-    source: 'assets/sounds/que_miras_bobo_messi.mp3',
-    isAsset: true,
-    isDefault: true,
-  ),
-  Sound(
-    id: 'silencio',
-    name: 'Silencio incomodo',
-    emoji: '😶',
-    colorValue: 0xFF14B8A6,
-    categoryId: _defaultCategoryId,
-    source: 'assets/sounds/penal_para_river.mp3',
-    isAsset: true,
-    isDefault: true,
-  ),
-];

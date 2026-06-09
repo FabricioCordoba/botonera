@@ -21,7 +21,7 @@ class ImportedAudioFile {
 class FileStorage {
   Future<Directory> _soundsDirectory() async {
     final base = await getApplicationDocumentsDirectory();
-    final dir = Directory(p.join(base.path, 'custom_sounds'));
+    final dir = Directory(p.join(base.path, 'sounds'));
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
@@ -92,6 +92,42 @@ class FileStorage {
     }
   }
 
+  Future<List<File>> listLocalAudioFiles() async {
+    if (kIsWeb) {
+      return const [];
+    }
+
+    final dirs = <Directory>[
+      await _soundsDirectory(),
+      await _legacyCustomSoundsDirectory(),
+    ];
+    final files = <File>[];
+
+    for (final dir in dirs) {
+      if (!await dir.exists()) {
+        continue;
+      }
+      await for (final entity in dir.list()) {
+        if (entity is File && isSupportedAudioPath(entity.path)) {
+          files.add(entity);
+        }
+      }
+    }
+
+    files.sort((a, b) => p.basename(a.path).compareTo(p.basename(b.path)));
+    return files;
+  }
+
+  Future<Directory> _legacyCustomSoundsDirectory() async {
+    final base = await getApplicationDocumentsDirectory();
+    return Directory(p.join(base.path, 'custom_sounds'));
+  }
+
+  bool isSupportedAudioPath(String path) {
+    final extension = p.extension(path).replaceFirst('.', '').toLowerCase();
+    return const {'mp3', 'wav', 'm4a', 'aac'}.contains(extension);
+  }
+
   Future<String> reserveRecordingPath(String fileName) async {
     final dir = await _soundsDirectory();
     return p.join(dir.path, fileName);
@@ -126,9 +162,26 @@ class FileStorage {
       return;
     }
 
-    final file = File(filePath);
-    if (await file.exists()) {
-      await file.delete();
+    try {
+      final file = File(filePath);
+      
+      // FIX #12: Validate that path is within app directory (path traversal check)
+      final resolvedPath = await file.resolveSymbolicLinks();
+      final soundsDir = await _soundsDirectory();
+      final soundsDirResolved = await Directory(soundsDir.path).resolveSymbolicLinks();
+      
+      if (!resolvedPath.startsWith(soundsDirResolved)) {
+        if (kDebugMode) {
+          debugPrint('⚠️ Path traversal attempt detected: $filePath');
+        }
+        return;
+      }
+
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {
+      // Silent - couldn't delete but not critical
     }
   }
 
