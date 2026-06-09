@@ -49,6 +49,31 @@ class SoundProvider extends ChangeNotifier {
   final AudioRecorder _recorder = AudioRecorder();
   final Uuid _uuid = const Uuid();
 
+  // FIX #3 #5: Logging and search caching
+  Timer? _searchDebounce;
+  String _lastCachedQuery = '';
+  List<Sound>? _cachedFilteredSounds;
+
+  // FIX #6: Category count cache
+  final Map<String, int> _soundCountByCategory = {};
+
+  // FIX #3: Centralized logging helpers
+  void _logError(String msg, [Object? err, StackTrace? st]) {
+    if (kDebugMode) {
+      debugPrint('❌ $msg');
+      if (err != null) debugPrint('   → $err');
+      if (st != null) debugPrintStack(stackTrace: st);
+    }
+  }
+
+  void _logWarning(String msg) {
+    if (kDebugMode) debugPrint('⚠️ $msg');
+  }
+
+  void _logInfo(String msg) {
+    if (kDebugMode) debugPrint('ℹ️ $msg');
+  }
+
   static const String _prefsTheme = 'theme_mode';
   static const String _prefsVolume = 'global_volume';
   static const String _prefsVibration = 'vibration_enabled';
@@ -110,6 +135,11 @@ class SoundProvider extends ChangeNotifier {
   }
 
   List<Sound> get allSoundsFiltered {
+    // FIX #5: Cache - Si query es la misma, devolver cached
+    if (_lastCachedQuery == searchQuery && _cachedFilteredSounds != null) {
+      return _cachedFilteredSounds!;
+    }
+
     final filtered = sounds.where((sound) {
       if (searchQuery.isEmpty) {
         return true;
@@ -117,6 +147,11 @@ class SoundProvider extends ChangeNotifier {
       return sound.name.toLowerCase().contains(searchQuery.toLowerCase());
     }).toList();
     filtered.sort((a, b) => a.name.compareTo(b.name));
+    
+    // FIX #5: Cache result
+    _lastCachedQuery = searchQuery;
+    _cachedFilteredSounds = filtered;
+    
     return filtered;
   }
 
@@ -146,6 +181,10 @@ class SoundProvider extends ChangeNotifier {
       await _syncSoundLibraryFromStorage();
       categories = await _database.getCategories();
       sounds = await _database.getSounds();
+      
+      // FIX #6: Initialize category count cache
+      await _updateCategoryCounts();
+      
       selectedCategoryId = categories.isEmpty ? null : categories.first.id;
       await _audioService.preload(sounds);
       await _audioService.setGlobalVolume(settings.globalVolume);
@@ -157,18 +196,22 @@ class SoundProvider extends ChangeNotifier {
       await _syncBackgroundService(showFeedback: false);
       await _refreshStorageUsage();
       isInitialized = true;
+      _logInfo('SoundProvider initialized successfully');
       notifyListeners();
-    } catch (_) {
+    } catch (e, st) {
+      _logError('Error initializing provider', e, st);
       showError(
         'No pude inicializar la app completa. Algunas funciones pueden estar limitadas.',
       );
       categories = _defaultCategories;
       try {
         sounds = await _discoverBundledSounds();
+
       } catch (_) {
         sounds = const [];
       }
       selectedCategoryId = categories.first.id;
+
       isInitialized = true;
       notifyListeners();
     }
@@ -191,7 +234,12 @@ class SoundProvider extends ChangeNotifier {
         volumeDownSoundId: prefs.getString(_prefsVolumeDownSound),
         shakeSoundId: prefs.getString(_prefsShakeSound),
       );
-    } catch (_) {
+      _logInfo('Settings loaded successfully');
+    } on PlatformException catch (e) {
+      _logError('Platform error loading settings: ${e.message}', e);
+      settings = const AppSettings();
+    } catch (e, st) {
+      _logError('Error loading settings', e, st);
       settings = const AppSettings();
     }
   }
@@ -225,7 +273,9 @@ class SoundProvider extends ChangeNotifier {
         _prefsShakeSound,
         settings.shakeSoundId,
       );
+
     } catch (_) {}
+
   }
 
   Future<void> _persistNullableString(
@@ -257,6 +307,9 @@ class SoundProvider extends ChangeNotifier {
   }
 
   Future<void> playSound(Sound sound) async {
+    // FIX #1: Stop playback first to avoid race condition
+    await stopPlayback();
+    
     currentlyPlayingId = sound.id;
     notifyListeners();
 
@@ -273,34 +326,60 @@ class SoundProvider extends ChangeNotifier {
       clearBanner(notify: false);
       await _audioService.play(sound);
       await _markSoundPlayed(sound);
-    } catch (_) {
+    } on PlatformException catch (e) {
+      _logError('Audio platform error', e);
       showError('No pude reproducir "${sound.name}".');
-    } finally {
+      currentlyPlayingId = null;
+      notifyListeners();
+    } catch (e, st) {
+      _logError('Error reproduciendo sonido', e, st);
+      showError('Error inesperado.');
       currentlyPlayingId = null;
       notifyListeners();
     }
+    // FIX #1: Don't clear here - let AudioPlayer notify completion
   }
 
   Future<void> stopPlayback() async {
-    await _audioService.stopAll();
+    try {
+      await _audioService.stopAll();
+    } catch (e) {
+      _logWarning('Error stopping playback: $e');
+    }
     currentlyPlayingId = null;
     notifyListeners();
   }
 
   Future<void> _markSoundPlayed(Sound sound) async {
-    final updated = sound.copyWith(
-      playCount: sound.playCount + 1,
-      lastPlayedAt: DateTime.now(),
-    );
-    await _database.upsertSound(updated);
-    sounds = sounds
-        .map((item) => item.id == updated.id ? updated : item)
-        .toList();
-    recentHistoryIds = [
-      updated.id,
-      ...recentHistoryIds.where((id) => id != updated.id),
-    ].take(10).toList();
-    await _persistHistory();
+    try {
+      final updated = sound.copyWith(
+        playCount: sound.playCount + 1,
+        lastPlayedAt: DateTime.now(),
+      );
+      await _database.upsertSound(updated);
+      
+      // FIX #7: Verify sound exists in memory list
+      final index = sounds.indexWhere((s) => s.id == updated.id);
+      if (index >= 0) {
+        final newList = [...sounds];
+        newList[index] = updated;
+        sounds = newList;
+      } else {
+        // Sound not found - reload from DB
+        _logWarning('Sound not found in memory after playing, reloading');
+        sounds = await _database.getSounds();
+      }
+      
+      recentHistoryIds = [
+        updated.id,
+        ...recentHistoryIds.where((id) => id != updated.id),
+      ].take(10).toList();
+      
+      await _persistHistory();
+      notifyListeners();
+    } catch (e, st) {
+      _logError('Error marking sound as played', e, st);
+    }
   }
 
   Future<void> selectCategory(String categoryId) async {
@@ -340,8 +419,14 @@ class SoundProvider extends ChangeNotifier {
   }
 
   void setSearchQuery(String value) {
-    searchQuery = value;
-    notifyListeners();
+    // FIX #5: Debounce search queries
+    _searchDebounce?.cancel();
+    
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      searchQuery = value;
+      _lastCachedQuery = ''; // Invalidate cache
+      notifyListeners();
+    });
   }
 
   Future<void> toggleFavorite(Sound sound) async {
@@ -363,26 +448,40 @@ class SoundProvider extends ChangeNotifier {
   }
 
   Future<void> deleteSound(Sound sound) async {
+    // FIX #10: Feedback cuando se intenta eliminar sonido por defecto
     if (sound.isDefault) {
+      showError('No puedes eliminar audios por defecto.');
       return;
     }
 
-    await _database.deleteSound(sound.id);
-    await _fileStorage.deleteIfExists(sound.source);
-    sounds = sounds.where((item) => item.id != sound.id).toList();
-    recentHistoryIds = recentHistoryIds.where((id) => id != sound.id).toList();
-    await _persistHistory();
-    await _refreshStorageUsage();
-    notifyListeners();
+    try {
+      await _database.deleteSound(sound.id);
+      await _fileStorage.deleteIfExists(sound.source);
+      sounds = sounds.where((item) => item.id != sound.id).toList();
+      recentHistoryIds = recentHistoryIds.where((id) => id != sound.id).toList();
+      
+      // FIX #6: Update category cache
+      _soundCountByCategory[sound.categoryId] =
+          (_soundCountByCategory[sound.categoryId] ?? 1) - 1;
+      
+      await _persistHistory();
+      await _refreshStorageUsage();
+      showSuccess('Audio "${sound.name}" eliminado.');
+      notifyListeners();
+    } catch (e, st) {
+      _logError('Error eliminando sonido', e, st);
+      showError('No pude eliminar el audio. Intenta de nuevo.');
+    }
   }
 
   Future<void> importCustomSound() async {
     if (customSoundCount >= settings.maxCustomSounds) {
       showError(
-        'Llegaste al limite de ${settings.maxCustomSounds} audios personalizados.',
+        'Llegaste al límite de ${settings.maxCustomSounds} audios personalizados.',
       );
       return;
     }
+
 
     final imported = await _fileStorage.importAudioFile();
     if (imported == null) {
@@ -394,7 +493,45 @@ class SoundProvider extends ChangeNotifier {
     sounds = await _database.getSounds();
     await _refreshStorageUsage();
     showSuccess('Audio importado correctamente.');
+
     notifyListeners();
+
+    try {
+      final imported = await _fileStorage.importAudioFile();
+      if (imported == null) {
+        return;
+      }
+
+      // FIX #9: Don't reload everything, just add locally
+      final newSound = Sound(
+        id: _uuid.v4(),
+        name: imported.name,
+        emoji: '🎵',
+        colorValue: 0xFF7C3AED,
+        categoryId: _customCategoryId,
+        source: imported.source,
+        isAsset: false,
+        isDefault: false,
+        createdAt: DateTime.now(),
+      );
+
+      await _database.upsertSound(newSound);
+      sounds = [...sounds, newSound];
+      
+      // FIX #6: Update cache
+      _soundCountByCategory[_customCategoryId] =
+          (_soundCountByCategory[_customCategoryId] ?? 0) + 1;
+      
+      await _refreshStorageUsage();
+      showSuccess('Audio "${newSound.name}" importado correctamente.');
+      notifyListeners();
+    } catch (e, st) {
+      _logError('Error importando sonido', e, st);
+      showError('No pude importar el audio. Intenta de nuevo.');
+    } finally {
+      isBusy = false;
+      notifyListeners();
+    }
   }
 
   Future<void> startRecording() async {
@@ -466,29 +603,71 @@ class SoundProvider extends ChangeNotifier {
         path != null &&
         (path.startsWith('blob:') || path.startsWith('data:'));
 
-    if (path == null || (!isWebRecording && !File(path).existsSync())) {
-      showError('Todavia no hay grabacion para guardar.');
+    if (path == null) {
+      showError('Todavía no hay grabación para guardar.');
       return;
     }
 
-    final sound = Sound(
-      id: _uuid.v4(),
-      name: name.trim().isEmpty ? 'Nueva frase' : name.trim(),
-      emoji: emoji,
-      colorValue: colorValue,
-      categoryId: _customCategoryId,
-      source: path,
-      isAsset: false,
-      isDefault: false,
-      createdAt: DateTime.now(),
-    );
-    await _database.upsertSound(sound);
-    sounds = [...sounds, sound];
-    recordingPath = null;
-    recordingPreviewName = null;
-    await _refreshStorageUsage();
-    showSuccess('Audio guardado correctamente.');
-    notifyListeners();
+    // FIX #4: Safe file existence check
+    if (!isWebRecording) {
+      try {
+        final exists = await File(path).exists();
+        if (!exists) {
+          showError('El archivo de grabación ya no existe.');
+          recordingPath = null;
+          notifyListeners();
+          return;
+        }
+      } catch (e) {
+        _logError('Error verificando grabación', e);
+        showError('Error al verificar la grabación.');
+        return;
+      }
+    }
+
+    // FIX #8: Input validation
+    if (name.trim().isEmpty && emoji.isEmpty) {
+      showError('Debes ingresar un nombre o emoji válido.');
+      return;
+    }
+
+    try {
+      final sound = Sound(
+        id: _uuid.v4(),
+        name: name.trim().isEmpty ? 'Nueva frase' : name.trim(),
+        emoji: emoji.isEmpty ? '🎙' : emoji,
+        colorValue: _validateColorValue(colorValue),
+        categoryId: _customCategoryId,
+        source: path,
+        isAsset: false,
+        isDefault: false,
+        createdAt: DateTime.now(),
+      );
+      
+      await _database.upsertSound(sound);
+      sounds = [...sounds, sound];
+      recordingPath = null;
+      recordingPreviewName = null;
+      
+      // FIX #6: Update cache
+      _soundCountByCategory[_customCategoryId] =
+          (_soundCountByCategory[_customCategoryId] ?? 0) + 1;
+      
+      await _refreshStorageUsage();
+      showSuccess('Audio guardado correctamente.');
+      notifyListeners();
+    } catch (e, st) {
+      _logError('Error guardando grabación', e, st);
+      showError('Error al guardar la grabación.');
+    }
+  }
+
+  // FIX #8: Helper to validate color value
+  int _validateColorValue(int value) {
+    if (value < 0 || value > 0xFFFFFFFF) {
+      return 0xFF7C3AED; // Default purple
+    }
+    return value;
   }
 
   Future<void> clearHistory() async {
@@ -965,6 +1144,20 @@ class SoundProvider extends ChangeNotifier {
     }
   }
 
+  // FIX #6: Update category count cache
+  Future<void> _updateCategoryCounts() async {
+    _soundCountByCategory.clear();
+    for (final category in categories) {
+      _soundCountByCategory[category.id] =
+          sounds.where((s) => s.categoryId == category.id).length;
+    }
+  }
+
+  // FIX #6: Get sound count for a category
+  int getSoundCountForCategory(String categoryId) {
+    return _soundCountByCategory[categoryId] ?? 0;
+  }
+
   ThemeMode _themeModeFromString(String? value) {
     return ThemeMode.values.firstWhere(
       (mode) => mode.name == value,
@@ -980,11 +1173,25 @@ class SoundProvider extends ChangeNotifier {
   }
 
   @override
-  void dispose() {
-    _errorTimer?.cancel();
-    unawaited(_audioService.dispose());
-    unawaited(_recorder.dispose());
-    super.dispose();
+  Future<void> dispose() async {
+    try {
+      // FIX #2: Properly clean up resources
+      await _audioService.stopAll();
+      await _audioService.dispose();
+      
+      await _recorder.dispose();
+      
+      await _hardwareService.setEnabled(false);
+      
+      _errorTimer?.cancel();
+      _searchDebounce?.cancel();
+      
+      _logInfo('SoundProvider disposed successfully');
+      super.dispose();
+    } catch (e, st) {
+      _logError('Error in dispose', e, st);
+      super.dispose();
+    }
   }
 }
 
