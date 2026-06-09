@@ -210,7 +210,9 @@ class BackgroundAudioService : Service(), SensorEventListener {
             return
         }
 
+
         if (!shouldHandleShakeTrigger()) {
+
             return
         }
 
@@ -575,6 +577,7 @@ class BackgroundAudioService : Service(), SensorEventListener {
     }
 
     private fun shouldHandleBackgroundTrigger(): Boolean {
+=
         return isDeviceUnavailableForNormalUse()
     }
 
@@ -595,6 +598,7 @@ class BackgroundAudioService : Service(), SensorEventListener {
             keyguardManager.isKeyguardLocked
         }
         return locked || !powerManager.isInteractive
+
     }
 
     private fun buildNotification(): Notification {
