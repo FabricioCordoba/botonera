@@ -61,15 +61,17 @@ class LocalDb {
     required List<Sound> sounds,
   }) async {
     final existingCategories = await getCategories();
-    if (existingCategories.isEmpty) {
-      for (final category in categories) {
+    final existingCategoryIds = existingCategories.map((item) => item.id).toSet();
+    for (final category in categories) {
+      if (!existingCategoryIds.contains(category.id)) {
         await upsertCategory(category);
       }
     }
 
     final existingSounds = await getSounds();
-    if (existingSounds.isEmpty) {
-      for (final sound in sounds) {
+    final existingSoundIds = existingSounds.map((item) => item.id).toSet();
+    for (final sound in sounds) {
+      if (!existingSoundIds.contains(sound.id)) {
         await upsertSound(sound);
       }
     }

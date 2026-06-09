@@ -137,7 +137,7 @@ class SettingsScreen extends ConsumerWidget {
               contentPadding: EdgeInsets.zero,
               title: const Text('Servicio persistente'),
               subtitle: const Text(
-                'Mantiene auricular y shake activos con notificacion visible de reproduccion.',
+                'Mantiene Volumen +, Volumen - y shake activos con notificacion visible.',
               ),
               value: controller.settings.backgroundServiceEnabled,
               onChanged: controller.updateBackgroundServiceEnabled,
@@ -201,38 +201,6 @@ class SettingsScreen extends ConsumerWidget {
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
-            ),
-            const SizedBox(height: 14),
-            _SoundAssignmentField(
-              title: 'Boton multimedia del auricular',
-              description:
-                  'Responde a play, pause, siguiente y anterior cuando el servicio esta activo.',
-              selectedSoundId: controller.assignedSoundIdForButton(
-                PhysicalButtonType.headset,
-              ),
-              sounds: controller.sounds,
-              onChanged: (soundId) => controller.assignPhysicalButtonSound(
-                PhysicalButtonType.headset,
-                soundId,
-              ),
-            ),
-            const SizedBox(height: 14),
-            _SoundAssignmentField(
-              title: 'Notificacion: Sonido 1',
-              description:
-                  'Boton en la notificacion para disparar un sonido con el telefono bloqueado.',
-              selectedSoundId: controller.notificationSound1AssignedId(),
-              sounds: controller.sounds,
-              onChanged: controller.assignNotificationSound1,
-            ),
-            const SizedBox(height: 14),
-            _SoundAssignmentField(
-              title: 'Notificacion: Sonido 2',
-              description:
-                  'Segundo boton en la notificacion para disparar otro sonido con el telefono bloqueado.',
-              selectedSoundId: controller.notificationSound2AssignedId(),
-              sounds: controller.sounds,
-              onChanged: controller.assignNotificationSound2,
             ),
             const SizedBox(height: 14),
             _SoundAssignmentField(

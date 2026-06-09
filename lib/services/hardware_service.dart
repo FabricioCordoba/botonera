@@ -18,7 +18,7 @@ class HardwareService {
   }
 
   String get availabilityMessage =>
-      'Volumen + y Volumen - funcionan con la app abierta. En segundo plano, el servicio usa notificacion persistente, botones multimedia y shake.';
+      'Volumen +, Volumen - y shake pueden funcionar en segundo plano con el servicio persistente activo.';
 
   Future<void> simulatePress(PhysicalButtonType button) async {
     await _onButtonPressed?.call(button);
@@ -113,7 +113,6 @@ class HardwareService {
     final button = switch (buttonName) {
       'volume_up' => PhysicalButtonType.volumeUp,
       'volume_down' => PhysicalButtonType.volumeDown,
-      'headset' => PhysicalButtonType.headset,
       _ => null,
     };
 
