@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -55,6 +56,8 @@ class BackgroundAudioService : Service(), SensorEventListener {
         const val EXTRA_NOTIFICATION_1_LABEL = "notification_1_label"
         const val EXTRA_NOTIFICATION_2_PATH = "notification_2_path"
         const val EXTRA_NOTIFICATION_2_LABEL = "notification_2_label"
+        const val PREFS_NAME = "botonera_background_service"
+        const val PREF_APP_FOREGROUND = "app_foreground"
 
         private const val NOTIFICATION_CHANNEL_ID = "botonera_background_audio"
         private const val NOTIFICATION_ID = 4242
@@ -62,7 +65,6 @@ class BackgroundAudioService : Service(), SensorEventListener {
         private const val SHAKE_THRESHOLD_GRAVITY = 3.0f
         private const val SHAKE_CONFIRMATION_WINDOW_MS = 260L
         private const val SHAKE_DEBOUNCE_MS = 1800L
-        private const val PREFS_NAME = "botonera_background_service"
     }
 
     private lateinit var mediaSession: MediaSessionCompat
@@ -208,6 +210,10 @@ class BackgroundAudioService : Service(), SensorEventListener {
             return
         }
 
+        if (!shouldHandleShakeTrigger()) {
+            return
+        }
+
         val x = event.values[0]
         val y = event.values[1]
         val z = event.values[2]
@@ -271,6 +277,11 @@ class BackgroundAudioService : Service(), SensorEventListener {
                     syntheticRemoteVolume = (syntheticRemoteVolume + direction).coerceIn(0, 100)
                     currentVolume = syntheticRemoteVolume
 
+                    if (!shouldHandleBackgroundTrigger()) {
+                        Log.d(TAG, "ignoring media session volume while device is unlocked")
+                        return
+                    }
+
                     when {
                         direction > 0 -> {
                             Log.d(TAG, "media session volume up path=${volumeUpPath != null}")
@@ -289,6 +300,11 @@ class BackgroundAudioService : Service(), SensorEventListener {
     }
 
     private fun triggerMediaButtonSound() {
+        if (!shouldHandleBackgroundTrigger()) {
+            Log.d(TAG, "ignoring media button while device is unlocked")
+            return
+        }
+
         playPath(mediaButtonPath)
     }
 
@@ -366,6 +382,11 @@ class BackgroundAudioService : Service(), SensorEventListener {
             return
         }
         lastVolumeObserverTriggerMs = now
+
+        if (!shouldHandleBackgroundTrigger()) {
+            Log.d(TAG, "ignoring observed volume change while device is unlocked")
+            return
+        }
 
         if (currentVolume > previousVolume) {
             Log.d(TAG, "observed volume up stream=$changedStream $previousVolume->$currentVolume")
@@ -551,6 +572,29 @@ class BackgroundAudioService : Service(), SensorEventListener {
 
     private fun hasVolumeButtonSounds(): Boolean {
         return !volumeUpPath.isNullOrBlank() || !volumeDownPath.isNullOrBlank()
+    }
+
+    private fun shouldHandleBackgroundTrigger(): Boolean {
+        return isDeviceUnavailableForNormalUse()
+    }
+
+    private fun shouldHandleShakeTrigger(): Boolean {
+        return isAppInForeground() || isDeviceUnavailableForNormalUse()
+    }
+
+    private fun isAppInForeground(): Boolean {
+        return prefs().getBoolean(PREF_APP_FOREGROUND, false)
+    }
+
+    private fun isDeviceUnavailableForNormalUse(): Boolean {
+        val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val locked = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            keyguardManager.isDeviceLocked || keyguardManager.isKeyguardLocked
+        } else {
+            keyguardManager.isKeyguardLocked
+        }
+        return locked || !powerManager.isInteractive
     }
 
     private fun buildNotification(): Notification {

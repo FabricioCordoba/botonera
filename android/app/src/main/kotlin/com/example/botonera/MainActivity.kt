@@ -3,6 +3,7 @@ package com.example.botonera
 import android.Manifest
 import android.app.ForegroundServiceStartNotAllowedException
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -93,6 +94,7 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onResume() {
         super.onResume()
         isActivityResumed = true
+        setAppForeground(true)
         mainHandler.postDelayed({ flushPendingForegroundServiceStart() }, 300)
     }
 
@@ -103,6 +105,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onPause() {
         isActivityResumed = false
+        setAppForeground(false)
         super.onPause()
     }
 
@@ -251,6 +254,15 @@ class MainActivity : FlutterFragmentActivity() {
         return enabledServices.split(':').any { service ->
             service.equals(expected, ignoreCase = true)
         }
+    }
+
+    private fun setAppForeground(isForeground: Boolean) {
+        getSharedPreferences(
+            BackgroundAudioService.PREFS_NAME,
+            Context.MODE_PRIVATE
+        ).edit()
+            .putBoolean(BackgroundAudioService.PREF_APP_FOREGROUND, isForeground)
+            .apply()
     }
 
     private fun flushPendingForegroundServiceStart() {
