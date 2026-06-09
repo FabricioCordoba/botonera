@@ -9,16 +9,21 @@ import 'package:path_provider/path_provider.dart';
 import '../../domain/entities/sound.dart';
 
 class ImportedAudioFile {
-  const ImportedAudioFile({
-    required this.name,
-    required this.source,
-  });
+  const ImportedAudioFile({required this.name, required this.source});
 
   final String name;
   final String source;
 }
 
 class FileStorage {
+  static const Set<String> _supportedAudioExtensions = {
+    '.aac',
+    '.m4a',
+    '.mp3',
+    '.opus',
+    '.wav',
+  };
+
   Future<Directory> _soundsDirectory() async {
     final base = await getApplicationDocumentsDirectory();
     final dir = Directory(p.join(base.path, 'sounds'));
@@ -83,10 +88,7 @@ class FileStorage {
       );
 
       final copied = await sourceFile.copy(targetPath);
-      return ImportedAudioFile(
-        name: p.basename(path),
-        source: copied.path,
-      );
+      return ImportedAudioFile(name: p.basename(path), source: copied.path);
     } catch (_) {
       return null;
     }
@@ -157,8 +159,30 @@ class FileStorage {
     return targetFile.path;
   }
 
+  bool isSupportedAudioPath(String path) {
+    return _supportedAudioExtensions.contains(p.extension(path).toLowerCase());
+  }
+
+  Future<List<File>> listLocalAudioFiles() async {
+    if (kIsWeb) {
+      return const [];
+    }
+
+    final dir = await _soundsDirectory();
+    final files = <File>[];
+    await for (final entity in dir.list()) {
+      if (entity is File && isSupportedAudioPath(entity.path)) {
+        files.add(entity);
+      }
+    }
+    files.sort((a, b) => a.path.compareTo(b.path));
+    return files;
+  }
+
   Future<void> deleteIfExists(String filePath) async {
-    if (kIsWeb || filePath.startsWith('data:') || filePath.startsWith('blob:')) {
+    if (kIsWeb ||
+        filePath.startsWith('data:') ||
+        filePath.startsWith('blob:')) {
       return;
     }
 

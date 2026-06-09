@@ -206,11 +206,12 @@ class SoundProvider extends ChangeNotifier {
       categories = _defaultCategories;
       try {
         sounds = await _discoverBundledSounds();
-      } catch (e2) {
-        _logError('Error discovering bundled sounds', e2);
+
+      } catch (_) {
         sounds = const [];
       }
-      selectedCategoryId = categories.isEmpty ? null : categories.first.id;
+      selectedCategoryId = categories.first.id;
+
       isInitialized = true;
       notifyListeners();
     }
@@ -272,9 +273,9 @@ class SoundProvider extends ChangeNotifier {
         _prefsShakeSound,
         settings.shakeSoundId,
       );
-    } catch (e, st) {
-      _logError('Error persisting settings', e, st);
-    }
+
+    } catch (_) {}
+
   }
 
   Future<void> _persistNullableString(
@@ -481,7 +482,18 @@ class SoundProvider extends ChangeNotifier {
       return;
     }
 
-    isBusy = true;
+
+    final imported = await _fileStorage.importAudioFile();
+    if (imported == null) {
+      return;
+    }
+
+    await _syncSoundLibraryFromStorage();
+    categories = await _database.getCategories();
+    sounds = await _database.getSounds();
+    await _refreshStorageUsage();
+    showSuccess('Audio importado correctamente.');
+
     notifyListeners();
 
     try {
