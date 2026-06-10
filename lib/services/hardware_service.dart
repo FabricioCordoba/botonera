@@ -42,18 +42,6 @@ class HardwareService {
         false;
   }
 
-  Future<bool> isNotificationPermissionGranted() async {
-    return await _channel.invokeMethod<bool>(
-          'isNotificationPermissionGranted',
-        ) ??
-        true;
-  }
-
-  Future<bool> requestNotificationPermission() async {
-    return await _channel.invokeMethod<bool>('requestNotificationPermission') ??
-        true;
-  }
-
   Future<bool> isVolumeAccessibilityServiceEnabled() async {
     return await _channel.invokeMethod<bool>(
           'isVolumeAccessibilityServiceEnabled',
@@ -75,10 +63,6 @@ class HardwareService {
     required String? volumeDownLabel,
     required String? mediaButtonPath,
     required String? mediaButtonLabel,
-    required String? notification1Path,
-    required String? notification1Label,
-    required String? notification2Path,
-    required String? notification2Label,
     required String? shakePath,
     required String? shakeLabel,
     required bool shakeEnabled,
@@ -90,10 +74,6 @@ class HardwareService {
       'volumeDownLabel': volumeDownLabel,
       'mediaButtonPath': mediaButtonPath,
       'mediaButtonLabel': mediaButtonLabel,
-      'notification1Path': notification1Path,
-      'notification1Label': notification1Label,
-      'notification2Path': notification2Path,
-      'notification2Label': notification2Label,
       'shakePath': shakePath,
       'shakeLabel': shakeLabel,
       'shakeEnabled': shakeEnabled,

@@ -157,12 +157,14 @@ class FileStorage {
 
     try {
       final file = File(filePath);
-      
+
       // FIX #12: Validate that path is within app directory (path traversal check)
       final resolvedPath = await file.resolveSymbolicLinks();
       final soundsDir = await _soundsDirectory();
-      final soundsDirResolved = await Directory(soundsDir.path).resolveSymbolicLinks();
-      
+      final soundsDirResolved = await Directory(
+        soundsDir.path,
+      ).resolveSymbolicLinks();
+
       if (!resolvedPath.startsWith(soundsDirResolved)) {
         if (kDebugMode) {
           debugPrint('⚠️ Path traversal attempt detected: $filePath');

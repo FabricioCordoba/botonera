@@ -1,6 +1,5 @@
 package com.example.botonera
 
-import android.Manifest
 import android.app.ForegroundServiceStartNotAllowedException
 import android.content.ComponentName
 import android.content.Context
@@ -30,13 +29,6 @@ class MainActivity : FlutterFragmentActivity() {
     private var isActivityResumed = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val notificationPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        pendingResult?.success(granted)
-        pendingResult = null
-    }
-
     private val batteryOptimizationLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
@@ -62,12 +54,6 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                     "requestIgnoreBatteryOptimizations" -> {
                         requestIgnoreBatteryOptimizations(result)
-                    }
-                    "isNotificationPermissionGranted" -> {
-                        result.success(isNotificationPermissionGranted())
-                    }
-                    "requestNotificationPermission" -> {
-                        requestNotificationPermission(result)
                     }
                     "isVolumeAccessibilityServiceEnabled" -> {
                         result.success(isVolumeAccessibilityServiceEnabled())
@@ -127,32 +113,6 @@ class MainActivity : FlutterFragmentActivity() {
         }
 
         return super.dispatchKeyEvent(event)
-    }
-
-    private fun isNotificationPermissionGranted(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            return true
-        }
-
-        return ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.POST_NOTIFICATIONS
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun requestNotificationPermission(result: MethodChannel.Result) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            result.success(true)
-            return
-        }
-
-        if (isNotificationPermissionGranted()) {
-            result.success(true)
-            return
-        }
-
-        pendingResult = result
-        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     private fun isIgnoringBatteryOptimizations(): Boolean {
@@ -217,22 +177,6 @@ class MainActivity : FlutterFragmentActivity() {
             putExtra(
                 BackgroundAudioService.EXTRA_SHAKE_ENABLED,
                 args?.get("shakeEnabled") as? Boolean ?: false
-            )
-            putExtra(
-                BackgroundAudioService.EXTRA_NOTIFICATION_1_PATH,
-                args?.get("notification1Path") as? String
-            )
-            putExtra(
-                BackgroundAudioService.EXTRA_NOTIFICATION_1_LABEL,
-                args?.get("notification1Label") as? String
-            )
-            putExtra(
-                BackgroundAudioService.EXTRA_NOTIFICATION_2_PATH,
-                args?.get("notification2Path") as? String
-            )
-            putExtra(
-                BackgroundAudioService.EXTRA_NOTIFICATION_2_LABEL,
-                args?.get("notification2Label") as? String
             )
         }
 

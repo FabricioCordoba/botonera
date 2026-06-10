@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/entities/app_settings.dart';
 import '../../domain/entities/sound.dart';
 import '../providers/sound_provider.dart';
+import '../widgets/ad_banner.dart';
 import '../widgets/sound_button.dart';
 import 'audio_management_screen.dart';
 import 'record_screen.dart';
@@ -35,19 +36,37 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ? IndexedStack(index: _index, children: pages)
             : const Center(child: CircularProgressIndicator()),
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (value) async {
-          await controller.stopPlayback();
-          if (mounted) {
-            setState(() => _index = value);
-          }
-        },
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.grid_view_rounded), label: 'Inicio'),
-          NavigationDestination(icon: Icon(Icons.mic_rounded), label: 'Grabar'),
-          NavigationDestination(icon: Icon(Icons.library_music_rounded), label: 'Audios'),
-          NavigationDestination(icon: Icon(Icons.tune_rounded), label: 'Config'),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_index != 1) const AdMobBanner(),
+          NavigationBar(
+            selectedIndex: _index,
+            onDestinationSelected: (value) async {
+              await controller.stopPlayback();
+              if (mounted) {
+                setState(() => _index = value);
+              }
+            },
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.grid_view_rounded),
+                label: 'Inicio',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.mic_rounded),
+                label: 'Grabar',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.library_music_rounded),
+                label: 'Audios',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.tune_rounded),
+                label: 'Config',
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -65,7 +84,9 @@ class _DashboardPage extends StatelessWidget {
     final selectedCategory = controller.categories.where(
       (item) => item.id == controller.selectedCategoryId,
     );
-    final categoryName = selectedCategory.isEmpty ? null : selectedCategory.first.name;
+    final categoryName = selectedCategory.isEmpty
+        ? null
+        : selectedCategory.first.name;
 
     return CustomScrollView(
       slivers: [
@@ -95,9 +116,12 @@ class _DashboardPage extends StatelessWidget {
                   children: [
                     for (final category in controller.visibleCategories)
                       ChoiceChip(
-                        label: Text('${category.icon} ${category.name} (${controller.sounds.where((sound) => sound.categoryId == category.id).length})'),
+                        label: Text(
+                          '${category.icon} ${category.name} (${controller.sounds.where((sound) => sound.categoryId == category.id).length})',
+                        ),
                         selected: category.id == controller.selectedCategoryId,
-                        onSelected: (_) => controller.selectCategory(category.id),
+                        onSelected: (_) =>
+                            controller.selectCategory(category.id),
                       ),
                   ],
                 ),
@@ -113,7 +137,8 @@ class _DashboardPage extends StatelessWidget {
                 ],
                 _SectionHeader(
                   title: categoryName ?? 'Audios',
-                  trailing: '${controller.currentCategorySounds.length} botones',
+                  trailing:
+                      '${controller.currentCategorySounds.length} botones',
                 ),
               ],
             ),
@@ -124,12 +149,6 @@ class _DashboardPage extends StatelessWidget {
           sliver: SliverGrid(
             delegate: SliverChildBuilderDelegate(
               (context, index) {
-                if (index == controller.currentCategorySounds.length &&
-                    controller.selectedCategoryId == 'custom') {
-                  return _AddSoundTile(
-                    onTap: controller.importCustomSound,
-                  );
-                }
                 final sound = controller.currentCategorySounds[index];
                 return SizedBox(
                   height: _buttonHeight(controller.settings.buttonSize),
@@ -142,14 +161,17 @@ class _DashboardPage extends StatelessWidget {
                   ),
                 );
               },
-              childCount: controller.currentCategorySounds.length +
-                  (controller.selectedCategoryId == 'custom' ? 1 : 0),
+              childCount: controller.currentCategorySounds.length,
             ),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: _columnsForWidth(MediaQuery.of(context).size.width),
+              crossAxisCount: _columnsForWidth(
+                MediaQuery.of(context).size.width,
+              ),
               mainAxisSpacing: 14,
               crossAxisSpacing: 14,
-              childAspectRatio: _childAspectRatio(controller.settings.buttonSize),
+              childAspectRatio: _childAspectRatio(
+                controller.settings.buttonSize,
+              ),
             ),
           ),
         ),
@@ -164,7 +186,9 @@ class _DashboardPage extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: theme.colorScheme.surface,
                     borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: theme.dividerColor.withValues(alpha: 0.2)),
+                    border: Border.all(
+                      color: theme.dividerColor.withValues(alpha: 0.2),
+                    ),
                   ),
                   child: Text(
                     'Ultima reproduccion: ${controller.lastPlayedSound?.name ?? 'Todavia nada'} (${controller.formatLastPlayed(controller.lastPlayedSound)})',
@@ -243,7 +267,9 @@ class _SectionHeader extends StatelessWidget {
       children: [
         Text(
           title,
-          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
         ),
         const Spacer(),
         Text(
@@ -284,37 +310,3 @@ class _FavoritesRow extends ConsumerWidget {
   }
 }
 
-class _AddSoundTile extends StatelessWidget {
-  const _AddSoundTile({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Ink(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: theme.colorScheme.primary.withValues(alpha: 0.35),
-            style: BorderStyle.solid,
-          ),
-          color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
-        ),
-        child: const Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.add_circle_outline_rounded, size: 34),
-              SizedBox(height: 8),
-              Text('Agregar audio'),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
