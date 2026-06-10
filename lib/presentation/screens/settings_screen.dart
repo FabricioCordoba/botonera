@@ -137,7 +137,7 @@ class SettingsScreen extends ConsumerWidget {
               contentPadding: EdgeInsets.zero,
               title: const Text('Servicio persistente'),
               subtitle: const Text(
-                'Mantiene Volumen +, Volumen - y shake activos con notificacion visible.',
+                'Mantiene Volumen +, Volumen - y shake activos en segundo plano.',
               ),
               value: controller.settings.backgroundServiceEnabled,
               onChanged: controller.updateBackgroundServiceEnabled,
@@ -152,20 +152,6 @@ class SettingsScreen extends ConsumerWidget {
               onChanged: controller.settings.backgroundServiceEnabled
                   ? controller.updateShakeEnabled
                   : null,
-            ),
-            _StatusTile(
-              title: 'Notificaciones',
-              value: controller.notificationPermissionGranted
-                  ? 'Permitidas'
-                  : 'Pendientes',
-              actionLabel: controller.notificationPermissionGranted
-                  ? 'Listo'
-                  : 'Permitir',
-              onPressed: controller.notificationPermissionGranted
-                  ? null
-                  : () async {
-                      await controller.requestNotificationPermission();
-                    },
             ),
             _StatusTile(
               title: 'Bateria',

@@ -149,10 +149,6 @@ class _DashboardPage extends StatelessWidget {
           sliver: SliverGrid(
             delegate: SliverChildBuilderDelegate(
               (context, index) {
-                if (index == controller.currentCategorySounds.length &&
-                    controller.selectedCategoryId == 'custom') {
-                  return _AddSoundTile(onTap: controller.importCustomSound);
-                }
                 final sound = controller.currentCategorySounds[index];
                 return SizedBox(
                   height: _buttonHeight(controller.settings.buttonSize),
@@ -165,9 +161,7 @@ class _DashboardPage extends StatelessWidget {
                   ),
                 );
               },
-              childCount:
-                  controller.currentCategorySounds.length +
-                  (controller.selectedCategoryId == 'custom' ? 1 : 0),
+              childCount: controller.currentCategorySounds.length,
             ),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: _columnsForWidth(
@@ -316,37 +310,3 @@ class _FavoritesRow extends ConsumerWidget {
   }
 }
 
-class _AddSoundTile extends StatelessWidget {
-  const _AddSoundTile({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Ink(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: theme.colorScheme.primary.withValues(alpha: 0.35),
-            style: BorderStyle.solid,
-          ),
-          color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
-        ),
-        child: const Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.add_circle_outline_rounded, size: 34),
-              SizedBox(height: 8),
-              Text('Agregar audio'),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

@@ -39,10 +39,6 @@ class BackgroundAudioService : Service(), SensorEventListener {
         const val ACTION_START_OR_UPDATE = "com.example.botonera.START_OR_UPDATE"
         const val ACTION_VOLUME_UP = "com.example.botonera.VOLUME_UP"
         const val ACTION_VOLUME_DOWN = "com.example.botonera.VOLUME_DOWN"
-        const val ACTION_NOTIFICATION_PLAY_1 = "com.example.botonera.NOTIF_PLAY_1"
-        const val ACTION_NOTIFICATION_PLAY_2 = "com.example.botonera.NOTIF_PLAY_2"
-        const val ACTION_NOTIFICATION_STOP = "com.example.botonera.NOTIF_STOP"
-
         const val EXTRA_VOLUME_UP_PATH = "volume_up_path"
         const val EXTRA_VOLUME_UP_LABEL = "volume_up_label"
         const val EXTRA_VOLUME_DOWN_PATH = "volume_down_path"
@@ -52,17 +48,13 @@ class BackgroundAudioService : Service(), SensorEventListener {
         const val EXTRA_SHAKE_PATH = "shake_path"
         const val EXTRA_SHAKE_LABEL = "shake_label"
         const val EXTRA_SHAKE_ENABLED = "shake_enabled"
-        const val EXTRA_NOTIFICATION_1_PATH = "notification_1_path"
-        const val EXTRA_NOTIFICATION_1_LABEL = "notification_1_label"
-        const val EXTRA_NOTIFICATION_2_PATH = "notification_2_path"
-        const val EXTRA_NOTIFICATION_2_LABEL = "notification_2_label"
         const val PREFS_NAME = "botonera_background_service"
         const val PREF_APP_FOREGROUND = "app_foreground"
 
         private const val NOTIFICATION_CHANNEL_ID = "botonera_background_audio"
         private const val NOTIFICATION_ID = 4242
         private const val TAG = "BotoneraBgService"
-        private const val SHAKE_THRESHOLD_GRAVITY = 3.0f
+        private const val SHAKE_THRESHOLD_GRAVITY = 4.0f
         private const val SHAKE_CONFIRMATION_WINDOW_MS = 260L
         private const val SHAKE_DEBOUNCE_MS = 1800L
     }
@@ -85,10 +77,6 @@ class BackgroundAudioService : Service(), SensorEventListener {
     private var lastShakeTimestamp = 0L
     private var lastShakeCandidateTimestamp = 0L
     private var shakeCandidateCount = 0
-    private var notification1Path: String? = null
-    private var notification1Label: String? = null
-    private var notification2Path: String? = null
-    private var notification2Label: String? = null
     private var syntheticRemoteVolume = 50
     private val observedVolumeStreams = intArrayOf(
         AudioManager.STREAM_MUSIC,
@@ -141,15 +129,11 @@ class BackgroundAudioService : Service(), SensorEventListener {
                 shakePath = intent.getStringExtra(EXTRA_SHAKE_PATH)
                 shakeLabel = intent.getStringExtra(EXTRA_SHAKE_LABEL)
                 shakeEnabled = intent.getBooleanExtra(EXTRA_SHAKE_ENABLED, false)
-                notification1Path = intent.getStringExtra(EXTRA_NOTIFICATION_1_PATH)
-                notification1Label = intent.getStringExtra(EXTRA_NOTIFICATION_1_LABEL)
-                notification2Path = intent.getStringExtra(EXTRA_NOTIFICATION_2_PATH)
-                notification2Label = intent.getStringExtra(EXTRA_NOTIFICATION_2_LABEL)
                 saveConfiguration()
 
                 Log.d(
                     TAG,
-                    "startOrUpdate volUp=${volumeUpPath != null} volDown=${volumeDownPath != null} mediaButton=${mediaButtonPath != null} shakeEnabled=$shakeEnabled shakePath=${shakePath != null} notif1=${notification1Path != null} notif2=${notification2Path != null}"
+                    "startOrUpdate volUp=${volumeUpPath != null} volDown=${volumeDownPath != null} mediaButton=${mediaButtonPath != null} shakeEnabled=$shakeEnabled shakePath=${shakePath != null}"
                 )
 
                 updatePlaybackState()
@@ -168,25 +152,6 @@ class BackgroundAudioService : Service(), SensorEventListener {
                 promoteToForeground()
                 Log.d(TAG, "accessibility action: volume down")
                 playPath(volumeDownPath)
-            }
-            ACTION_NOTIFICATION_PLAY_1 -> {
-                loadConfiguration()
-                Log.d(TAG, "notification action: play1")
-                playPath(notification1Path)
-                // refrescar texto/botones si cambió algo
-                startForeground(NOTIFICATION_ID, buildNotification())
-            }
-            ACTION_NOTIFICATION_PLAY_2 -> {
-                loadConfiguration()
-                Log.d(TAG, "notification action: play2")
-                playPath(notification2Path)
-                startForeground(NOTIFICATION_ID, buildNotification())
-            }
-            ACTION_NOTIFICATION_STOP -> {
-                Log.d(TAG, "notification action: stop")
-                stopPlayback()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
             }
         }
 
@@ -523,10 +488,6 @@ class BackgroundAudioService : Service(), SensorEventListener {
             .putString(EXTRA_SHAKE_PATH, shakePath)
             .putString(EXTRA_SHAKE_LABEL, shakeLabel)
             .putBoolean(EXTRA_SHAKE_ENABLED, shakeEnabled)
-            .putString(EXTRA_NOTIFICATION_1_PATH, notification1Path)
-            .putString(EXTRA_NOTIFICATION_1_LABEL, notification1Label)
-            .putString(EXTRA_NOTIFICATION_2_PATH, notification2Path)
-            .putString(EXTRA_NOTIFICATION_2_LABEL, notification2Label)
             .apply()
     }
 
@@ -541,10 +502,6 @@ class BackgroundAudioService : Service(), SensorEventListener {
         shakePath = prefs.getString(EXTRA_SHAKE_PATH, shakePath)
         shakeLabel = prefs.getString(EXTRA_SHAKE_LABEL, shakeLabel)
         shakeEnabled = prefs.getBoolean(EXTRA_SHAKE_ENABLED, shakeEnabled)
-        notification1Path = prefs.getString(EXTRA_NOTIFICATION_1_PATH, notification1Path)
-        notification1Label = prefs.getString(EXTRA_NOTIFICATION_1_LABEL, notification1Label)
-        notification2Path = prefs.getString(EXTRA_NOTIFICATION_2_PATH, notification2Path)
-        notification2Label = prefs.getString(EXTRA_NOTIFICATION_2_LABEL, notification2Label)
     }
 
     private fun prefs(): SharedPreferences {
@@ -610,65 +567,18 @@ class BackgroundAudioService : Service(), SensorEventListener {
             PendingIntent.FLAG_UPDATE_CURRENT or pendingIntentImmutableFlag()
         )
 
-        val notificationText = buildList {
-            if (volumeUpLabel != null) add("Vol+: $volumeUpLabel")
-            if (volumeDownLabel != null) add("Vol-: $volumeDownLabel")
-            if (mediaButtonLabel != null) add("Auricular: $mediaButtonLabel")
-            if (notification1Label != null) add("N1: $notification1Label")
-            if (notification2Label != null) add("N2: $notification2Label")
-            if (shakeEnabled && shakeLabel != null) add("Shake: $shakeLabel")
-        }.joinToString(" | ").ifBlank {
-            "Acciones listas para reproducir con el telefono bloqueado."
-        }
-
-        val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("Botonera activa en segundo plano")
-            .setContentText(notificationText)
+        return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setContentTitle("Botonera")
+            .setContentText("Servicio activo")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .setSilent(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(contentIntent)
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setStyle(MediaStyle().setMediaSession(mediaSession.sessionToken))
-
-        var compactIndex = 0
-
-        if (notification1Path != null) {
-            builder.addAction(
-                android.R.drawable.ic_media_play,
-                notification1Label ?: "Sonido 1",
-                buildServicePendingIntent(ACTION_NOTIFICATION_PLAY_1, 10)
-            )
-            compactIndex++
-        }
-
-        if (notification2Path != null) {
-            builder.addAction(
-                android.R.drawable.ic_media_play,
-                notification2Label ?: "Sonido 2",
-                buildServicePendingIntent(ACTION_NOTIFICATION_PLAY_2, 11)
-            )
-            compactIndex++
-        }
-
-        builder.addAction(
-            android.R.drawable.ic_media_pause,
-            "Stop",
-            buildServicePendingIntent(ACTION_NOTIFICATION_STOP, 12)
-        )
-
-        builder.setStyle(
-            MediaStyle()
-                .setMediaSession(mediaSession.sessionToken)
-                .setShowActionsInCompactView(
-                    0,
-                    if (compactIndex > 1) 1 else 0,
-                    if (compactIndex > 2) 2 else 0
-                )
-        )
-
-        return builder.build()
+            .build()
     }
 
     private fun createNotificationChannel() {
@@ -680,10 +590,12 @@ class BackgroundAudioService : Service(), SensorEventListener {
         val channel = NotificationChannel(
             NOTIFICATION_CHANNEL_ID,
             "Botonera segundo plano",
-            NotificationManager.IMPORTANCE_LOW
+            NotificationManager.IMPORTANCE_MIN
         ).apply {
-            description = "Mantiene activa la reproduccion por auricular y shake."
+            description = "Requerido por Android para el servicio en segundo plano."
             setSound(null, null)
+            enableVibration(false)
+            setShowBadge(false)
             lockscreenVisibility = Notification.VISIBILITY_SECRET
         }
         manager.createNotificationChannel(channel)
@@ -758,18 +670,6 @@ class BackgroundAudioService : Service(), SensorEventListener {
             currentPlayer = null
             updatePlaybackState()
         }
-    }
-
-    private fun buildServicePendingIntent(action: String, requestCode: Int): PendingIntent {
-        val intent = Intent(this, BackgroundAudioService::class.java).apply {
-            this.action = action
-        }
-        return PendingIntent.getService(
-            this,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or pendingIntentImmutableFlag()
-        )
     }
 
     private fun pendingIntentImmutableFlag(): Int {

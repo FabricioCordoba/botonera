@@ -49,10 +49,8 @@ class SoundProvider extends ChangeNotifier {
   final AudioRecorder _recorder = AudioRecorder();
   final Uuid _uuid = const Uuid();
 
-  // FIX #3 #5: Logging and search caching
+  // FIX #3 #5: Logging and search debounce
   Timer? _searchDebounce;
-  String _lastCachedQuery = '';
-  List<Sound>? _cachedFilteredSounds;
 
   // FIX #6: Category count cache
   final Map<String, int> _soundCountByCategory = {};
@@ -103,7 +101,6 @@ class SoundProvider extends ChangeNotifier {
   List<String> recentHistoryIds = const [];
   int storageBytes = 0;
   Timer? _errorTimer;
-  bool notificationPermissionGranted = true;
   bool batteryOptimizationIgnored = false;
   bool volumeAccessibilityEnabled = false;
 
@@ -135,23 +132,18 @@ class SoundProvider extends ChangeNotifier {
   }
 
   List<Sound> get allSoundsFiltered {
-    // FIX #5: Cache - Si query es la misma, devolver cached
-    if (_lastCachedQuery == searchQuery && _cachedFilteredSounds != null) {
-      return _cachedFilteredSounds!;
-    }
-
     final filtered = sounds.where((sound) {
       if (searchQuery.isEmpty) {
         return true;
       }
       return sound.name.toLowerCase().contains(searchQuery.toLowerCase());
     }).toList();
-    filtered.sort((a, b) => a.name.compareTo(b.name));
-    
-    // FIX #5: Cache result
-    _lastCachedQuery = searchQuery;
-    _cachedFilteredSounds = filtered;
-    
+    filtered.sort((a, b) {
+      if (a.isDefault != b.isDefault) {
+        return a.isDefault ? 1 : -1;
+      }
+      return a.name.compareTo(b.name);
+    });
     return filtered;
   }
 
@@ -424,7 +416,6 @@ class SoundProvider extends ChangeNotifier {
     
     _searchDebounce = Timer(const Duration(milliseconds: 300), () {
       searchQuery = value;
-      _lastCachedQuery = ''; // Invalidate cache
       notifyListeners();
     });
   }
@@ -482,48 +473,20 @@ class SoundProvider extends ChangeNotifier {
       return;
     }
 
-
-    final imported = await _fileStorage.importAudioFile();
-    if (imported == null) {
-      return;
-    }
-
-    await _syncSoundLibraryFromStorage();
-    categories = await _database.getCategories();
-    sounds = await _database.getSounds();
-    await _refreshStorageUsage();
-    showSuccess('Audio importado correctamente.');
-
-    notifyListeners();
-
     try {
+      isBusy = true;
+      notifyListeners();
+
       final imported = await _fileStorage.importAudioFile();
       if (imported == null) {
         return;
       }
 
-      // FIX #9: Don't reload everything, just add locally
-      final newSound = Sound(
-        id: _uuid.v4(),
-        name: imported.name,
-        emoji: '🎵',
-        colorValue: 0xFF7C3AED,
-        categoryId: _customCategoryId,
-        source: imported.source,
-        isAsset: false,
-        isDefault: false,
-        createdAt: DateTime.now(),
-      );
-
-      await _database.upsertSound(newSound);
-      sounds = [...sounds, newSound];
-      
-      // FIX #6: Update cache
-      _soundCountByCategory[_customCategoryId] =
-          (_soundCountByCategory[_customCategoryId] ?? 0) + 1;
-      
+      await _syncSoundLibraryFromStorage();
+      categories = await _database.getCategories();
+      sounds = await _database.getSounds();
       await _refreshStorageUsage();
-      showSuccess('Audio "${newSound.name}" importado correctamente.');
+      showSuccess('Audio "${imported.name}" importado correctamente.');
       notifyListeners();
     } catch (e, st) {
       _logError('Error importando sonido', e, st);
@@ -793,28 +756,14 @@ class SoundProvider extends ChangeNotifier {
 
   Future<void> _refreshAndroidCapabilities() async {
     if (kIsWeb || !Platform.isAndroid) {
-      notificationPermissionGranted = true;
       batteryOptimizationIgnored = true;
       return;
     }
 
-    notificationPermissionGranted = await _hardwareService
-        .isNotificationPermissionGranted();
     batteryOptimizationIgnored = await _hardwareService
         .isIgnoringBatteryOptimizations();
     volumeAccessibilityEnabled = await _hardwareService
         .isVolumeAccessibilityServiceEnabled();
-  }
-
-  Future<bool> requestNotificationPermission() async {
-    if (kIsWeb || !Platform.isAndroid) {
-      return true;
-    }
-
-    final granted = await _hardwareService.requestNotificationPermission();
-    await _refreshAndroidCapabilities();
-    notifyListeners();
-    return granted;
   }
 
   Future<bool> requestBatteryOptimizationExemption() async {
@@ -876,15 +825,6 @@ class SoundProvider extends ChangeNotifier {
       return;
     }
 
-    if (!notificationPermissionGranted) {
-      if (showFeedback) {
-        showError(
-          'Hace falta permiso de notificaciones para iniciar el servicio.',
-        );
-      }
-      return;
-    }
-
     if ((volumeUpSound != null || volumeDownSound != null) &&
         !volumeAccessibilityEnabled) {
       if (showFeedback) {
@@ -914,10 +854,6 @@ class SoundProvider extends ChangeNotifier {
       shakePath: shakePath,
       shakeLabel: shakeSound?.name,
       shakeEnabled: settings.shakeEnabled,
-      notification1Path: null,
-      notification1Label: null,
-      notification2Path: null,
-      notification2Label: null,
     );
   }
 
