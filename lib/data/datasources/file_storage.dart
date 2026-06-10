@@ -126,8 +126,7 @@ class FileStorage {
   }
 
   bool isSupportedAudioPath(String path) {
-    final extension = p.extension(path).replaceFirst('.', '').toLowerCase();
-    return const {'mp3', 'wav', 'm4a', 'aac'}.contains(extension);
+    return _supportedAudioExtensions.contains(p.extension(path).toLowerCase());
   }
 
   Future<String> reserveRecordingPath(String fileName) async {
@@ -159,26 +158,6 @@ class FileStorage {
     return targetFile.path;
   }
 
-  bool isSupportedAudioPath(String path) {
-    return _supportedAudioExtensions.contains(p.extension(path).toLowerCase());
-  }
-
-  Future<List<File>> listLocalAudioFiles() async {
-    if (kIsWeb) {
-      return const [];
-    }
-
-    final dir = await _soundsDirectory();
-    final files = <File>[];
-    await for (final entity in dir.list()) {
-      if (entity is File && isSupportedAudioPath(entity.path)) {
-        files.add(entity);
-      }
-    }
-    files.sort((a, b) => a.path.compareTo(b.path));
-    return files;
-  }
-
   Future<void> deleteIfExists(String filePath) async {
     if (kIsWeb ||
         filePath.startsWith('data:') ||
@@ -188,12 +167,14 @@ class FileStorage {
 
     try {
       final file = File(filePath);
-      
+
       // FIX #12: Validate that path is within app directory (path traversal check)
       final resolvedPath = await file.resolveSymbolicLinks();
       final soundsDir = await _soundsDirectory();
-      final soundsDirResolved = await Directory(soundsDir.path).resolveSymbolicLinks();
-      
+      final soundsDirResolved = await Directory(
+        soundsDir.path,
+      ).resolveSymbolicLinks();
+
       if (!resolvedPath.startsWith(soundsDirResolved)) {
         if (kDebugMode) {
           debugPrint('⚠️ Path traversal attempt detected: $filePath');

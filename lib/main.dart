@@ -1,12 +1,32 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import 'presentation/providers/sound_provider.dart';
 import 'presentation/screens/home_screen.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (_supportsMobileAds) {
+    try {
+      await MobileAds.instance.initialize();
+    } catch (_) {}
+  }
   runApp(const ProviderScope(child: SoundboardApp()));
+}
+
+bool get _supportsMobileAds {
+  if (kIsWeb) {
+    return false;
+  }
+  if (WidgetsBinding.instance.runtimeType.toString().contains(
+    'TestWidgetsFlutterBinding',
+  )) {
+    return false;
+  }
+  return defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
 }
 
 class SoundboardApp extends ConsumerWidget {
@@ -54,14 +74,18 @@ class SoundboardApp extends ConsumerWidget {
               right: 16,
               bottom: 16,
               child: Material(
-                color: isError ? scheme.errorContainer : scheme.primaryContainer,
+                color: isError
+                    ? scheme.errorContainer
+                    : scheme.primaryContainer,
                 borderRadius: BorderRadius.circular(16),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Text(
                     message,
                     style: TextStyle(
-                      color: isError ? scheme.onErrorContainer : scheme.onPrimaryContainer,
+                      color: isError
+                          ? scheme.onErrorContainer
+                          : scheme.onPrimaryContainer,
                     ),
                   ),
                 ),

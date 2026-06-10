@@ -39,6 +39,10 @@
             android:name="flutterEmbedding"
             android:value="2"/>
 
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3940256099942544~3347511713"/>
+
         <!-- Foreground service for background media-button + shake triggers -->
         <service
             android:name=".BackgroundAudioService"

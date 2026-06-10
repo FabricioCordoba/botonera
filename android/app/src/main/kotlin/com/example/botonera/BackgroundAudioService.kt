@@ -577,7 +577,6 @@ class BackgroundAudioService : Service(), SensorEventListener {
     }
 
     private fun shouldHandleBackgroundTrigger(): Boolean {
-=
         return isDeviceUnavailableForNormalUse()
     }
 
