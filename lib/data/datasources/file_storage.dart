@@ -94,32 +94,6 @@ class FileStorage {
     }
   }
 
-  Future<List<File>> listLocalAudioFiles() async {
-    if (kIsWeb) {
-      return const [];
-    }
-
-    final dirs = <Directory>[
-      await _soundsDirectory(),
-      await _legacyCustomSoundsDirectory(),
-    ];
-    final files = <File>[];
-
-    for (final dir in dirs) {
-      if (!await dir.exists()) {
-        continue;
-      }
-      await for (final entity in dir.list()) {
-        if (entity is File && isSupportedAudioPath(entity.path)) {
-          files.add(entity);
-        }
-      }
-    }
-
-    files.sort((a, b) => p.basename(a.path).compareTo(p.basename(b.path)));
-    return files;
-  }
-
   Future<Directory> _legacyCustomSoundsDirectory() async {
     final base = await getApplicationDocumentsDirectory();
     return Directory(p.join(base.path, 'custom_sounds'));
@@ -127,6 +101,22 @@ class FileStorage {
 
   bool isSupportedAudioPath(String path) {
     return _supportedAudioExtensions.contains(p.extension(path).toLowerCase());
+  }
+
+  Future<List<File>> listLocalAudioFiles() async {
+    if (kIsWeb) {
+      return const [];
+    }
+
+    final dir = await _soundsDirectory();
+    final files = <File>[];
+    await for (final entity in dir.list()) {
+      if (entity is File && isSupportedAudioPath(entity.path)) {
+        files.add(entity);
+      }
+    }
+    files.sort((a, b) => a.path.compareTo(b.path));
+    return files;
   }
 
   Future<String> reserveRecordingPath(String fileName) async {
